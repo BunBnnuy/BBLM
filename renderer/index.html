@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline';" />
+  <title>BB's LibMan</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <h1>BB's LibMan</h1>
+    <input type="search" id="search" placeholder="Search assets…" />
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="btn-sort" title="Sort order">⇅ Date</button>
+    <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
+  </div>
+
+  <div id="library">
+    <div class="empty-state" id="empty-state">
+      <h2>No assets yet</h2>
+      <p>Configure your root folder in Settings, then enable the downloads monitor to start importing assets.</p>
+    </div>
+    <div class="asset-grid" id="asset-grid"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

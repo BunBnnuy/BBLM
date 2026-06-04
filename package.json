@@ -1,0 +1,32 @@
+{
+  "name": "bbs-libman",
+  "version": "1.0.0",
+  "description": "BB's Library Manager for 3D model and game asset downloads",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect=5858",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "com.bbs-libman.app",
+    "productName": "BB's LibMan",
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "electron-store": "^8.2.0",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "electron": "^42.3.3",
+    "electron-builder": "^26.8.1"
+  }
+}

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Electron cache / binary (downloaded at install time)
+node_modules/electron/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+*.suo
+*.user
+
+# Local env / secrets
+.env
+.env.local
+
+# electron-store data (user config, stored at app data path — not in repo)
+# (already outside repo, but just in case)
+*.json.bak
+
+# Claude Code
+.claude/

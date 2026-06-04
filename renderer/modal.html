@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https: http:; style-src 'self' 'unsafe-inline';" />
+  <title>Import Asset – BB's LibMan</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="modal-body">
+    <div class="modal-title">Import Asset</div>
+
+    <div class="field">
+      <label>Origin URL</label>
+      <div class="field-row">
+        <input type="url" id="origin-url" placeholder="https://example.com/asset-page" />
+        <button class="btn-secondary" id="btn-scrape">Fetch Data</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Asset Name</label>
+      <input type="text" id="asset-name" placeholder="My Awesome Asset" />
+    </div>
+
+    <div class="field">
+      <label>File to Import</label>
+      <input type="text" id="file-name" placeholder="filename.zip" readonly />
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div class="field" id="image-section" style="display:none">
+      <label>Select Thumbnail</label>
+      <div class="image-grid" id="image-grid"></div>
+      <div style="margin-top:6px; font-size:11px; color:var(--text-dim)">Click an image to select it as the thumbnail</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-ghost" id="btn-cancel">Cancel</button>
+      <button class="btn-primary" id="btn-import" disabled>Import</button>
+    </div>
+  </div>
+
+  <script src="modal.js"></script>
+</body>
+</html>

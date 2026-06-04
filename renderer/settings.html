@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>Settings – BB's LibMan</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="settings-body">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <button class="btn-ghost" id="btn-back">← Back</button>
+      <div class="settings-title">Settings</div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Library</h3>
+      <div class="field">
+        <label>Root Folder — all assets will be organized here</label>
+        <div class="field-row">
+          <input type="text" id="root-folder" readonly placeholder="Click to choose…" />
+          <button class="btn-secondary" id="btn-pick-root">Browse</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Downloads Folder — where your browser saves files</label>
+        <div class="field-row">
+          <input type="text" id="downloads-folder" readonly placeholder="Click to choose…" />
+          <button class="btn-secondary" id="btn-pick-downloads">Browse</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Downloads Monitor</h3>
+      <p style="font-size:12px; color:var(--text-dim)">When enabled, BB's LibMan watches your downloads folder and shows a notification when a 3D asset or archive finishes downloading.</p>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+        <label class="toggle-label" for="monitor-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
+          Monitor downloads folder
+        </label>
+        <button id="monitor-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
+      </div>
+    </div>
+
+
+<div id="save-status" class="status"></div>
+
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn-primary" id="btn-save">Save Settings</button>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

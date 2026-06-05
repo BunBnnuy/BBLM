@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="modal-body">
-    <div class="modal-title">Import Asset</div>
+    <div class="modal-title" id="modal-title">Import Asset</div>
 
     <div class="field">
       <label>Origin URL</label>
@@ -23,7 +23,7 @@
       <input type="text" id="asset-name" placeholder="My Awesome Asset" />
     </div>
 
-    <div class="field">
+    <div class="field" id="file-field">
       <label>File to Import</label>
       <input type="text" id="file-name" placeholder="filename.zip" readonly />
     </div>
@@ -31,14 +31,14 @@
     <div id="status" class="status"></div>
 
     <div class="field" id="image-section" style="display:none">
-      <label>Select Thumbnail</label>
+      <label>Select Thumbnail <span style="font-weight:400; color:var(--text-dim)">(optional — leave unselected to keep current)</span></label>
       <div class="image-grid" id="image-grid"></div>
       <div style="margin-top:6px; font-size:11px; color:var(--text-dim)">Click an image to select it as the thumbnail</div>
     </div>
 
     <div class="modal-actions">
       <button class="btn-ghost" id="btn-cancel">Cancel</button>
-      <button class="btn-primary" id="btn-import" disabled>Import</button>
+      <button class="btn-primary" id="btn-import">Import</button>
     </div>
   </div>
 

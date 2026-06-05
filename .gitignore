@@ -30,5 +30,8 @@ desktop.ini
 # (already outside repo, but just in case)
 *.json.bak
 
+# Temporary download staging folder
+downloads/
+
 # Claude Code
 .claude/

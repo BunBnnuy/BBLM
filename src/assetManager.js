@@ -165,4 +165,44 @@ function getAssets(store) {
   return assets.sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
 }
 
-module.exports = { importAsset, getAssets, extractAssetId };
+async function updateAsset({ assetId, name, originUrl, selectedImageUrl, store }) {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir = path.join(rootFolder, assetId);
+  const metaPath = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) throw new Error('Asset not found: ' + assetId);
+
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  if (name) meta.name = name;
+  if (originUrl !== undefined) meta.originUrl = originUrl;
+
+  if (selectedImageUrl) {
+    const rawPath = path.join(assetDir, 'thumbnail_raw.tmp');
+    const thumbnailPath = path.join(assetDir, 'thumbnail.png');
+    try {
+      await downloadFile(selectedImageUrl, rawPath);
+      await sharp(rawPath)
+        .resize(500, 500, { fit: 'cover', position: 'centre' })
+        .png()
+        .toFile(thumbnailPath);
+      fs.unlinkSync(rawPath);
+      meta.thumbnail = 'thumbnail.png';
+    } catch (e) {
+      console.warn('Thumbnail update failed:', e.message);
+      fs.unlink(rawPath, () => {});
+    }
+  }
+
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  return { assetId, meta };
+}
+
+function deleteAsset({ assetId, store }) {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir = path.join(rootFolder, assetId);
+  if (fs.existsSync(assetDir)) {
+    fs.rmSync(assetDir, { recursive: true, force: true });
+  }
+  return { assetId };
+}
+
+module.exports = { importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile };

@@ -2,16 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline'; connect-src 'none';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline'; connect-src 'none'; script-src 'self';" />
   <title>BB's LibMan</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="topbar">
+    <img src="../assets/icon.png" class="topbar-icon" alt="" />
     <h1>BB's LibMan</h1>
     <input type="search" id="search" placeholder="Search assets…" />
+    <div id="dl-progress" style="display:none;">
+      <span id="dl-label" class="dl-label"></span>
+      <div class="dl-bar-track"><div id="dl-bar" class="dl-bar"></div></div>
+      <span id="dl-pct" class="dl-pct">0%</span>
+    </div>
     <div class="spacer"></div>
+    <span id="asset-count" class="asset-count" title=""></span>
     <button class="btn-ghost" id="btn-sort" title="Sort order">⇅ Date</button>
+    <button class="btn-ghost" id="btn-view" title="View mode">⊞ Grid</button>
     <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
   </div>
 
@@ -21,6 +29,18 @@
       <p>Configure your root folder in Settings, then enable the downloads monitor to start importing assets.</p>
     </div>
     <div class="asset-grid" id="asset-grid"></div>
+  </div>
+
+  <footer class="app-footer">
+    Made with ♥ for R.S. by BunBnnuy &nbsp;·&nbsp;
+    <a href="https://github.com/BunBnnuy/BBLM" class="footer-link">view BBLM repo</a>
+  </footer>
+
+  <div id="drop-overlay">
+    <div class="drop-overlay-inner">
+      <div class="drop-icon">📦</div>
+      <div class="drop-label">Drop file to import</div>
+    </div>
   </div>
 
   <script src="app.js"></script>

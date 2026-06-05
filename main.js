@@ -55,9 +55,13 @@ async function handleBoothDownloadUrl(url) {
     console.log('[booth-download] origin URL:', originUrl);
     console.log('[booth-download] filename:', fileName);
 
-    // Ensure temp downloads folder exists inside app dir
-    const tmpDir = path.join(__dirname, 'downloads');
+    // Use root folder from settings for temp downloads; fall back to userData
+    const rootFolder = store.get('rootFolder', '');
+    const tmpDir = rootFolder && fs.existsSync(rootFolder)
+      ? path.join(rootFolder, '_temp_downloads')
+      : path.join(app.getPath('userData'), 'downloads');
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    console.log('[booth-download] temp dir:', tmpDir);
 
     const destPath = path.join(tmpDir, fileName);
 

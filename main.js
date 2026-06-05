@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -11,18 +11,20 @@ const gotTheLock = app.requestSingleInstanceLock();
 
 let mainWindow = null;
 let modalWindow = null;
+let tray = null;
 
 if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
       mainWindow.focus();
     }
   });
 
   app.whenReady().then(() => {
+    createTray();
     createMainWindow();
 
     // Start monitor if it was enabled on last run
@@ -31,10 +33,45 @@ if (!gotTheLock) {
     }
   });
 
+  app.on('before-quit', () => { app.isQuitting = true; });
   app.on('quit', () => monitor.stop());
 }
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
+
+function createTray() {
+  tray = new Tray(ICON);
+  tray.setToolTip("BB's LibMan");
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+
+  tray.on('double-click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -54,6 +91,21 @@ function createMainWindow() {
 
   mainWindow.loadFile('renderer/index.html');
   mainWindow.once('ready-to-show', () => mainWindow.show());
+
+  // Minimize to tray instead of taskbar
+  mainWindow.on('minimize', (event) => {
+    event.preventDefault();
+    mainWindow.hide();
+  });
+
+  // Hide to tray on close unless app is actually quitting
+  mainWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 
   if (process.argv.includes('--inspect') || process.argv.find(a => a.startsWith('--inspect='))) {
@@ -99,7 +151,7 @@ function onFileDetected(filePath) {
   // Open the modal immediately
   createModalWindow({ originUrl: '', fileName, filePath });
   if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
     mainWindow.focus();
   }
 

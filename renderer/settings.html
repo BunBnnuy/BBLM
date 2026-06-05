@@ -43,6 +43,24 @@
     </div>
 
 
+    <div class="settings-section">
+      <h3>Booth Library Manager</h3>
+      <p style="font-size:12px; color:var(--text-dim)">When enabled, items from your local Booth Library Manager database are shown in the library alongside your own assets.</p>
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+        <label class="toggle-label" for="booth-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
+          Include Booth library manager
+        </label>
+        <button id="booth-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
+      </div>
+      <div class="field" id="booth-folder-field" style="display:none;">
+        <label>Booth LM download folder</label>
+        <div class="field-row">
+          <input type="text" id="booth-downloads-folder" readonly placeholder="Click to choose…" />
+          <button class="btn-secondary" id="btn-pick-booth-downloads">Browse</button>
+        </div>
+      </div>
+    </div>
+
 <div id="save-status" class="status"></div>
 
     <div style="display:flex; gap:8px; justify-content:flex-end;">

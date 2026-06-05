@@ -102,6 +102,21 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   transition: border-color .15s, transform .15s;
 }
 .asset-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.asset-card--booth { border-color: var(--accent2); }
+.asset-card--booth:hover { border-color: #7a54c0; }
+
+.source-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  background: var(--accent2);
+  color: #fff;
+  vertical-align: middle;
+  letter-spacing: .3px;
+}
 
 .asset-thumb {
   width: 100%;

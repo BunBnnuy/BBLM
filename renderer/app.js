@@ -17,11 +17,30 @@ btnSort.addEventListener('click', () => {
 });
 
 async function loadLibrary(filter = '') {
-  const assets = await window.api.getAssets();
+  const [assets, boothResult] = await Promise.all([
+    window.api.getAssets(),
+    window.api.getBoothItems(),
+  ]);
+
+  const boothItems = Array.isArray(boothResult) ? boothResult : [];
+
+  // Normalise booth items to the same shape as local assets
+  const boothNormalised = boothItems.map(b => ({
+    id: null,
+    name: b.name,
+    thumbnailPath: null,
+    thumbnailUrl: b.thumbnailUrl,
+    importedAt: b.importedAt,
+    originUrl: '',
+    localFolder: b.localFolder || '',
+    source: 'booth',
+  }));
+
+  let all = [...assets, ...boothNormalised];
 
   let filtered = filter
-    ? assets.filter(a => a.name.toLowerCase().includes(filter.toLowerCase()) || a.id.toLowerCase().includes(filter.toLowerCase()))
-    : assets;
+    ? all.filter(a => a.name.toLowerCase().includes(filter.toLowerCase()) || (a.id || '').toLowerCase().includes(filter.toLowerCase()))
+    : all;
 
   // Sort
   if (sortMode === 'alpha') {
@@ -36,25 +55,40 @@ async function loadLibrary(filter = '') {
   for (const asset of filtered) {
     const card = document.createElement('div');
     card.className = 'asset-card';
+    if (asset.source === 'booth') card.classList.add('asset-card--booth');
     card.title = asset.originUrl || '';
 
     let thumbHtml;
-    if (asset.thumbnailPath) {
-      thumbHtml = `<img class="asset-thumb" src="file://${asset.thumbnailPath.replace(/\\/g, '/')}" alt="${asset.name}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
+    if (asset.thumbnailUrl) {
+      // Remote URL (Booth items)
+      thumbHtml = `<img class="asset-thumb" src="${asset.thumbnailUrl}" alt="${escHtml(asset.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
+                   <div class="asset-thumb-placeholder" style="display:none">📦</div>`;
+    } else if (asset.thumbnailPath) {
+      thumbHtml = `<img class="asset-thumb" src="file://${asset.thumbnailPath.replace(/\\/g, '/')}" alt="${escHtml(asset.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
                    <div class="asset-thumb-placeholder" style="display:none">📦</div>`;
     } else {
       thumbHtml = `<div class="asset-thumb-placeholder">📦</div>`;
     }
 
     const date = asset.importedAt ? new Date(asset.importedAt).toLocaleDateString() : '';
+    const badge = asset.source === 'booth' ? '<span class="source-badge">Booth</span>' : '';
     card.innerHTML = `
       ${thumbHtml}
       <div class="asset-info">
-        <div class="asset-name">${escHtml(asset.name)}</div>
+        <div class="asset-name">${escHtml(asset.name)}${badge}</div>
         <div class="asset-date">${date}</div>
       </div>`;
 
-    card.addEventListener('click', () => window.api.openAssetFolder(asset.id));
+    if (asset.source === 'booth') {
+      if (asset.localFolder) {
+        card.style.cursor = 'pointer';
+        card.addEventListener('click', () => window.api.openBoothFolder(asset.localFolder));
+      } else {
+        card.style.cursor = 'default';
+      }
+    } else if (asset.id) {
+      card.addEventListener('click', () => window.api.openAssetFolder(asset.id));
+    }
     grid.appendChild(card);
   }
 }

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('api', {
   importAsset: (opts) => ipcRenderer.invoke('import-asset', opts),
   openAssetFolder: (assetId) => ipcRenderer.invoke('open-asset-folder', assetId),
   setMonitor: (enabled) => ipcRenderer.invoke('set-monitor', enabled),
+  getBoothItems: () => ipcRenderer.invoke('get-booth-items'),
+  openBoothFolder: (localFolder) => ipcRenderer.invoke('open-booth-folder', localFolder),
   closeModal: () => ipcRenderer.send('close-modal'),
   refreshLibrary: () => ipcRenderer.send('refresh-library'),
   onImportData: (cb) => ipcRenderer.on('import-data', (event, data) => cb(data)),

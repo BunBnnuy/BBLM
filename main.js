@@ -175,13 +175,66 @@ ipcMain.handle('get-config', () => ({
   watchedDomains: store.get('watchedDomains', []),
   downloadsFolder: store.get('downloadsFolder', app.getPath('downloads')),
   monitorEnabled: store.get('monitorEnabled', false),
+  boothEnabled: store.get('boothEnabled', false),
+  boothDownloadsFolder: store.get('boothDownloadsFolder', ''),
 }));
+
+ipcMain.handle('get-booth-items', () => {
+  const enabled = store.get('boothEnabled', false);
+  console.log('[Booth] enabled:', enabled);
+  if (!enabled) return [];
+
+  // Resolve path: %AppData%/Roaming/pm.booth.library-manager/data.db
+  const roamingDir = path.dirname(app.getPath('userData')); // …/Roaming
+  const boothDb = path.join(roamingDir, 'pm.booth.library-manager', 'data.db');
+  console.log('[Booth] db path:', boothDb);
+
+  try {
+    const initSqlJs = require('sql.js');
+    const dbBuffer = fs.readFileSync(boothDb);
+
+    return initSqlJs().then(SQL => {
+      const db = new SQL.Database(dbBuffer);
+      const stmt = db.prepare('SELECT id, name, thumbnail_url, updated_at FROM booth_items');
+      const rows = [];
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+      }
+      stmt.free();
+      db.close();
+
+      console.log('[Booth] rows fetched:', rows.length);
+      console.log('[Booth] first 3 rows:', JSON.stringify(rows.slice(0, 3), null, 2));
+
+      const boothDownloadsFolder = store.get('boothDownloadsFolder', '');
+      return rows.map(r => {
+        const folderName = `b${r.id}`;
+        const localFolder = boothDownloadsFolder
+          ? path.join(boothDownloadsFolder, folderName)
+          : null;
+        return {
+          boothId: String(r.id),
+          name: r.name || '',
+          thumbnailUrl: r.thumbnail_url || '',
+          importedAt: r.updated_at || '',
+          localFolder: localFolder || '',
+          source: 'booth',
+        };
+      });
+    });
+  } catch (err) {
+    console.error('[Booth] error:', err.message);
+    return { error: err.message };
+  }
+});
 
 ipcMain.handle('set-config', (event, config) => {
   if (config.rootFolder !== undefined) store.set('rootFolder', config.rootFolder);
   if (config.watchedDomains !== undefined) store.set('watchedDomains', config.watchedDomains);
   if (config.downloadsFolder !== undefined) store.set('downloadsFolder', config.downloadsFolder);
   if (config.monitorEnabled !== undefined) store.set('monitorEnabled', config.monitorEnabled);
+  if (config.boothEnabled !== undefined) store.set('boothEnabled', config.boothEnabled);
+  if (config.boothDownloadsFolder !== undefined) store.set('boothDownloadsFolder', config.boothDownloadsFolder);
   return true;
 });
 
@@ -221,6 +274,12 @@ ipcMain.handle('wait-for-file', async (event, { fileName, downloadsFolder }) => 
 ipcMain.handle('import-asset', async (event, { originUrl, filePath, selectedImageUrl, assetName }) => {
   const { importAsset } = require('./src/assetManager');
   return await importAsset({ originUrl, filePath, selectedImageUrl, assetName, store });
+});
+
+ipcMain.handle('open-booth-folder', (event, localFolder) => {
+  if (localFolder && fs.existsSync(localFolder)) {
+    shell.openPath(localFolder);
+  }
 });
 
 ipcMain.handle('open-asset-folder', (event, assetId) => {

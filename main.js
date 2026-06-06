@@ -19,6 +19,159 @@ let tray = null;
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 
+// ── Download Queue ────────────────────────────────────────────────────────────
+class DownloadQueue {
+  constructor() {
+    this.queue   = []; // pending items
+    this.active  = null; // currently processing item
+    this.running = false;
+    this._nextId = 1;
+  }
+
+  _notify() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('queue-update', this.status());
+    }
+  }
+
+  status() {
+    return {
+      active: this.active ? { ...this.active } : null,
+      pending: this.queue.map(i => ({ id: i.id, fileName: i.fileName, itemId: i.itemId })),
+    };
+  }
+
+  add(job) {
+    const item = { ...job, id: this._nextId++, status: 'pending', percent: 0 };
+    this.queue.push(item);
+    this._notify();
+    this._process();
+    return item.id;
+  }
+
+  cancel(id) {
+    // Cancel pending item
+    const idx = this.queue.findIndex(i => i.id === id);
+    if (idx !== -1) {
+      this.queue.splice(idx, 1);
+      this._notify();
+      return true;
+    }
+    // Cancel active item
+    if (this.active && this.active.id === id) {
+      this.active.cancelled = true;
+      return true;
+    }
+    return false;
+  }
+
+  async _process() {
+    if (this.running || this.queue.length === 0) return;
+    this.running = true;
+    this.active  = this.queue.shift();
+    this.active.status = 'downloading';
+    this._notify();
+
+    try {
+      await this._run(this.active);
+    } catch (err) {
+      console.error('[queue] job failed:', err.message);
+      this.active.status = 'error';
+      this.active.error  = err.message;
+      this._notify();
+      if (mainWindow) {
+        new Notification({
+          title: "BB's LibMan — Download Failed",
+          body: `"${this.active.fileName}": ${err.message}`,
+          icon: ICON,
+          silent: false,
+        }).show();
+      }
+    } finally {
+      this.active  = null;
+      this.running = false;
+      this._notify();
+      if (this.queue.length > 0) this._process();
+    }
+  }
+
+  async _run(item) {
+    if (item.cancelled) return;
+
+    const { dlUrl, fileName, itemId, originUrl } = item;
+
+    const rootFolder = store.get('rootFolder', '');
+    const tmpDir = rootFolder && fs.existsSync(rootFolder)
+      ? path.join(rootFolder, '_temp_downloads')
+      : path.join(app.getPath('userData'), 'downloads');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    const destPath = path.join(tmpDir, fileName);
+
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.setTitle(`BB's LibMan — Fetching metadata…`);
+    }
+
+    // Phase 1: scrape metadata + create asset shell
+    const { scrapePageMeta } = require('./src/scraper');
+    const { createAssetShell, finalizeAssetDownload } = require('./src/assetManager');
+
+    let assetName = fileName.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+    let tags = [];
+    let selectedImageUrl = null;
+
+    if (originUrl) {
+      try {
+        const scraped = await scrapePageMeta(originUrl);
+        if (scraped.name)   assetName        = scraped.name;
+        if (scraped.tags?.length)  tags        = scraped.tags;
+        if (scraped.images?.length) selectedImageUrl = scraped.images[0].url;
+      } catch (err) {
+        console.warn('[queue] scrape failed:', err.message);
+      }
+    }
+
+    if (item.cancelled) return;
+
+    const shell = await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, store });
+    if (mainWindow) mainWindow.webContents.send('refresh-library');
+
+    if (item.cancelled) {
+      // Clean up shell if cancelled before download
+      const { deleteAsset } = require('./src/assetManager');
+      deleteAsset({ assetId: shell.assetId, store });
+      return;
+    }
+
+    // Phase 2: download file
+    if (mainWindow) mainWindow.setTitle(`BB's LibMan — Downloading ${fileName}…`);
+
+    await downloadWithProgress(dlUrl, destPath, itemId, 0, (percent) => {
+      item.percent = percent;
+      this._notify();
+      if (mainWindow) mainWindow.webContents.send('asset-download-progress', { assetId: shell.assetId, percent });
+    });
+
+    finalizeAssetDownload({ assetId: shell.assetId, filePath: destPath, store });
+
+    if (mainWindow) {
+      mainWindow.webContents.send('asset-download-progress', { assetId: shell.assetId, percent: 100, done: true });
+      mainWindow.webContents.send('refresh-library');
+      mainWindow.setTitle(`BB's LibMan`);
+    }
+
+    new Notification({
+      title: "BB's LibMan — Asset Ready",
+      body: `"${shell.meta.name}" has been added to your library.`,
+      icon: ICON,
+      silent: false,
+    }).show();
+  }
+}
+
+const downloadQueue = new DownloadQueue();
+
 function handleUrl(url) {
   if (!url) return;
   console.log('[URL scheme] received:', url);
@@ -28,80 +181,29 @@ function handleUrl(url) {
   }
 }
 
-async function handleBoothDownloadUrl(url) {
-  console.log('[booth-download] handling:', url);
+function handleBoothDownloadUrl(url) {
+  console.log('[booth-download] queuing:', url);
 
+  const withProto = url
+    .replace('vroid.closet://', 'https://vroid.closet/')
+    .replace('booth-library-manager://', 'https://booth-library-manager/');
+
+  let dlUrl, itemId, fileName;
   try {
-    // Normalize to a parseable URL by replacing the custom scheme with https://
-    const withProto = url
-      .replace('vroid.closet://', 'https://vroid.closet/')
-      .replace('booth-library-manager://', 'https://booth-library-manager/');
-    const parsed = new URL(withProto);
-    const params = parsed.searchParams;
-
-    const encodedDlUrl = params.get('dlurl');
-    const itemId       = params.get('item_id');
-    const fileName     = params.get('downloadable_filename') || 'download.zip';
-
-    if (!encodedDlUrl) {
-      console.error('[booth-download] missing dlurl parameter');
-      return;
-    }
-
-    const dlUrl    = decodeURIComponent(encodedDlUrl);
-    const originUrl = itemId ? `https://booth.pm/en/items/${itemId}` : '';
-
-    console.log('[booth-download] download URL:', dlUrl);
-    console.log('[booth-download] origin URL:', originUrl);
-    console.log('[booth-download] filename:', fileName);
-
-    // Use root folder from settings for temp downloads; fall back to userData
-    const rootFolder = store.get('rootFolder', '');
-    const tmpDir = rootFolder && fs.existsSync(rootFolder)
-      ? path.join(rootFolder, '_temp_downloads')
-      : path.join(app.getPath('userData'), 'downloads');
-    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-    console.log('[booth-download] temp dir:', tmpDir);
-
-    const destPath = path.join(tmpDir, fileName);
-
-    // Notify the user that the download has started
-    const notif = new Notification({
-      title: "BB's LibMan — Downloading",
-      body: `Downloading "${fileName}"…`,
-      icon: ICON,
-      silent: true,
-    });
-    notif.show();
-
-    // Bring main window into view
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.webContents.send('download-progress', { itemId, percent: 0, done: false });
-    }
-
-    // Progress-aware download
-    await downloadWithProgress(dlUrl, destPath, itemId);
-
-    console.log('[booth-download] download complete:', destPath);
-
-    // Hide progress bar
-    if (mainWindow) mainWindow.webContents.send('download-progress', { itemId, percent: 100, done: true });
-
-    // Open import modal with the downloaded file
-    createModalWindow({ originUrl, fileName, filePath: destPath });
-    if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
-
+    const params = new URL(withProto).searchParams;
+    dlUrl    = params.get('dlurl');
+    itemId   = params.get('item_id');
+    fileName = params.get('downloadable_filename') || 'download.zip';
   } catch (err) {
-    console.error('[booth-download] error:', err.message);
-    new Notification({
-      title: "BB's LibMan — Download Failed",
-      body: err.message,
-      icon: ICON,
-      silent: false,
-    }).show();
+    console.error('[booth-download] failed to parse URL:', err.message);
+    return;
   }
+
+  if (!dlUrl) { console.error('[booth-download] missing dlurl'); return; }
+
+  const originUrl = itemId ? `https://booth.pm/en/items/${itemId}` : '';
+  const queueId = downloadQueue.add({ dlUrl, fileName, itemId, originUrl });
+  console.log(`[booth-download] added to queue as #${queueId} (${downloadQueue.queue.length + 1} total)`);
 }
 
 if (!gotTheLock) {
@@ -136,44 +238,88 @@ if (!gotTheLock) {
   app.on('quit', () => monitor.stop());
 }
 
-function downloadWithProgress(url, destPath, itemId) {
+function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgress = null) {
   const https = require('https');
   const http  = require('http');
 
-  function doDownload(url) {
-    return new Promise((resolve, reject) => {
-      const proto = url.startsWith('https') ? https : http;
-      const options = { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } };
+  if (redirectCount > 10) return Promise.reject(new Error('Too many redirects'));
 
-      proto.get(url, options, res => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          const redirectUrl = res.headers.location.startsWith('/')
-            ? new URL(res.headers.location, url).href
-            : res.headers.location;
-          return doDownload(redirectUrl).then(resolve).catch(reject);
+  return new Promise((resolve, reject) => {
+    const proto = url.startsWith('https') ? https : http;
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/octet-stream, application/zip, application/x-zip-compressed, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://booth.pm/',
+      },
+    };
+
+    proto.get(url, options, res => {
+      const { statusCode, headers } = res;
+      const contentType = headers['content-type'] || '';
+      const location    = headers['location'] || '';
+
+      console.log(`[download] ${statusCode} ${url.slice(0, 80)}…`);
+      console.log(`[download] content-type: ${contentType}`);
+      console.log(`[download] content-length: ${headers['content-length'] || 'unknown'}`);
+
+      // Follow redirects
+      if (statusCode >= 300 && statusCode < 400 && location) {
+        res.resume();
+        const redirectUrl = location.startsWith('/') ? new URL(location, url).href : location;
+        // Reject if redirect leads to auth/login page
+        if (/accounts\.|login|signin|auth/i.test(redirectUrl)) {
+          return reject(new Error('Download URL requires authentication — the link may have expired. Please re-download from Booth.'));
         }
-        if (res.statusCode !== 200) return reject(new Error('HTTP ' + res.statusCode));
+        return downloadWithProgress(redirectUrl, destPath, itemId, redirectCount + 1, onProgress).then(resolve).catch(reject);
+      }
 
-        const total = parseInt(res.headers['content-length'] || '0', 10);
-        let received = 0;
-        const file = fs.createWriteStream(destPath);
+      if (statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${statusCode} — download failed`));
+      }
 
-        res.on('data', chunk => {
-          received += chunk.length;
-          if (total > 0 && mainWindow) {
-            const percent = Math.round((received / total) * 100);
-            mainWindow.webContents.send('download-progress', { itemId, percent, done: false });
-          }
+      // Reject HTML/XML responses (error pages, login pages)
+      if (/text\/html|application\/xml|text\/xml/i.test(contentType)) {
+        // Read first 512 bytes to include in the error
+        let snippet = '';
+        res.setEncoding('utf8');
+        res.on('data', chunk => { snippet += chunk; });
+        res.on('end', () => {
+          console.error('[download] received HTML/XML instead of file:', snippet.slice(0, 200));
+          reject(new Error('Server returned an error page instead of the file. The download link may have expired — please re-download from Booth.'));
         });
+        return;
+      }
 
-        res.pipe(file);
-        file.on('finish', () => file.close(resolve));
-        res.on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
-      }).on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
-    });
-  }
+      const total = parseInt(headers['content-length'] || '0', 10);
+      let received = 0;
+      const file = fs.createWriteStream(destPath);
 
-  return doDownload(url);
+      res.on('data', chunk => {
+        received += chunk.length;
+        if (total > 0) {
+          const percent = Math.round((received / total) * 100);
+          if (onProgress) onProgress(percent);
+        }
+      });
+
+      res.pipe(file);
+      file.on('finish', () => {
+        file.close(() => {
+          const fileSize = fs.statSync(destPath).size;
+          console.log(`[download] saved ${fileSize} bytes to ${destPath}`);
+          if (fileSize < 1024) {
+            fs.unlink(destPath, () => {});
+            return reject(new Error(`Downloaded file is suspiciously small (${fileSize} bytes). The link may have expired.`));
+          }
+          resolve();
+        });
+      });
+      res.on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
+    }).on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
+  });
 }
 
 function createTray() {
@@ -332,16 +478,32 @@ ipcMain.handle('get-booth-items', () => {
 
     return initSqlJs().then(SQL => {
       const db = new SQL.Database(dbBuffer);
+
+      // Fetch items
       const stmt = db.prepare('SELECT id, name, thumbnail_url, updated_at FROM booth_items');
       const rows = [];
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject());
-      }
+      while (stmt.step()) rows.push(stmt.getAsObject());
       stmt.free();
+
+      // Fetch all tag relations in one query and group by item id
+      const tagMap = {};
+      const tagStmt = db.prepare('SELECT booth_item_id, tag FROM booth_item_tag_relations');
+      while (tagStmt.step()) {
+        const row = tagStmt.getAsObject();
+        const id = String(row.booth_item_id);
+        if (!tagMap[id]) tagMap[id] = [];
+        tagMap[id].push(row.tag);
+      }
+      tagStmt.free();
       db.close();
 
       console.log('[Booth] rows fetched:', rows.length);
       console.log('[Booth] first 3 rows:', JSON.stringify(rows.slice(0, 3), null, 2));
+
+      // Register all BLM tags into the global tag list
+      const { registerTags } = require('./src/assetManager');
+      const allBlmTags = Object.values(tagMap).flat();
+      if (allBlmTags.length) registerTags(allBlmTags, store);
 
       const boothDownloadsFolder = store.get('boothDownloadsFolder', '');
       const hidden = store.get('hiddenAssets', []);
@@ -349,16 +511,18 @@ ipcMain.handle('get-booth-items', () => {
       return rows
         .filter(r => !hidden.includes('booth:' + String(r.id)))
         .map(r => {
+          const id = String(r.id);
           const folderName = `b${r.id}`;
           const localFolder = boothDownloadsFolder
             ? path.join(boothDownloadsFolder, folderName)
             : null;
           return {
-            boothId: String(r.id),
+            boothId: id,
             name: r.name || '',
             thumbnailUrl: r.thumbnail_url || '',
             importedAt: r.updated_at || '',
             localFolder: localFolder || '',
+            tags: tagMap[id] || [],
             source: 'booth',
           };
         });
@@ -531,9 +695,9 @@ ipcMain.handle('wait-for-file', async (event, { fileName, downloadsFolder }) => 
   return await waitForFile(fileName, downloadsFolder);
 });
 
-ipcMain.handle('import-asset', async (event, { originUrl, filePath, selectedImageUrl, assetName }) => {
+ipcMain.handle('import-asset', async (event, { originUrl, filePath, selectedImageUrl, assetName, tags }) => {
   const { importAsset } = require('./src/assetManager');
-  return await importAsset({ originUrl, filePath, selectedImageUrl, assetName, store });
+  return await importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, store });
 });
 
 ipcMain.handle('open-booth-folder', (event, localFolder) => {
@@ -549,6 +713,22 @@ ipcMain.handle('open-asset-folder', (event, assetId) => {
 });
 
 ipcMain.handle('open-external', (event, url) => shell.openExternal(url));
+
+ipcMain.handle('set-window-title', (event, suffix) => {
+  if (mainWindow) {
+    mainWindow.setTitle(suffix ? `BB's LibMan — ${suffix}` : `BB's LibMan`);
+  }
+});
+
+ipcMain.handle('get-all-tags', () => store.get('allTags', []));
+ipcMain.handle('get-queue',      () => downloadQueue.status());
+ipcMain.handle('cancel-queue-item', (event, id) => downloadQueue.cancel(id));
+
+
+ipcMain.handle('set-asset-tags', (event, { assetId, tags }) => {
+  const { updateAsset } = require('./src/assetManager');
+  return updateAsset({ assetId, tags, store });
+});
 
 ipcMain.on('close-modal', () => {
   if (modalWindow) modalWindow.close();

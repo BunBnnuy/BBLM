@@ -86,7 +86,14 @@ function downloadFile(url, destPath) {
   });
 }
 
-async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, store }) {
+function registerTags(tags, store) {
+  if (!tags || !tags.length) return;
+  const existing = new Set(store.get('allTags', []));
+  tags.forEach(t => existing.add(t));
+  store.set('allTags', [...existing].sort((a, b) => a.localeCompare(b)));
+}
+
+async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, store }) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
@@ -128,6 +135,9 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, s
     }
   }
 
+  // Register tags globally
+  if (tags && tags.length) registerTags(tags, store);
+
   // Write metadata
   const meta = {
     id: assetId,
@@ -136,6 +146,7 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, s
     files: [path.basename(destFile)],
     thumbnail: thumbnailPath ? 'thumbnail.png' : null,
     importedAt: new Date().toISOString(),
+    tags: tags || [],
   };
   fs.writeFileSync(path.join(assetDir, 'meta.json'), JSON.stringify(meta, null, 2));
 
@@ -165,7 +176,7 @@ function getAssets(store) {
   return assets.sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
 }
 
-async function updateAsset({ assetId, name, originUrl, selectedImageUrl, store }) {
+async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, store }) {
   const rootFolder = store.get('rootFolder', '');
   const assetDir = path.join(rootFolder, assetId);
   const metaPath = path.join(assetDir, 'meta.json');
@@ -174,6 +185,10 @@ async function updateAsset({ assetId, name, originUrl, selectedImageUrl, store }
   const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   if (name) meta.name = name;
   if (originUrl !== undefined) meta.originUrl = originUrl;
+  if (tags !== undefined) {
+    meta.tags = tags;
+    registerTags(tags, store);
+  }
 
   if (selectedImageUrl) {
     const rawPath = path.join(assetDir, 'thumbnail_raw.tmp');
@@ -205,4 +220,71 @@ function deleteAsset({ assetId, store }) {
   return { assetId };
 }
 
-module.exports = { importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile };
+async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, store }) {
+  const rootFolder = store.get('rootFolder', '');
+  if (!rootFolder) throw new Error('Root folder not configured.');
+  if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
+
+  const assetId  = extractAssetId(originUrl);
+  const assetDir = path.join(rootFolder, assetId);
+  if (!fs.existsSync(assetDir)) fs.mkdirSync(assetDir, { recursive: true });
+
+  if (tags && tags.length) registerTags(tags, store);
+
+  // Download thumbnail immediately
+  let thumbnailPath = null;
+  if (selectedImageUrl) {
+    const rawPath = path.join(assetDir, 'thumbnail_raw.tmp');
+    thumbnailPath = path.join(assetDir, 'thumbnail.png');
+    try {
+      await downloadFile(selectedImageUrl, rawPath);
+      await sharp(rawPath)
+        .resize(500, 500, { fit: 'cover', position: 'centre' })
+        .png()
+        .toFile(thumbnailPath);
+      fs.unlinkSync(rawPath);
+    } catch (e) {
+      console.warn('Thumbnail failed:', e.message);
+      fs.unlink(rawPath, () => {});
+      thumbnailPath = null;
+    }
+  }
+
+  const meta = {
+    id: assetId,
+    name: assetName || assetId,
+    originUrl,
+    files: [],
+    thumbnail: thumbnailPath ? 'thumbnail.png' : null,
+    importedAt: new Date().toISOString(),
+    tags: tags || [],
+    downloadStatus: 'pending',
+  };
+  fs.writeFileSync(path.join(assetDir, 'meta.json'), JSON.stringify(meta, null, 2));
+  return { assetId, assetDir, meta };
+}
+
+function finalizeAssetDownload({ assetId, filePath, store }) {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir   = path.join(rootFolder, assetId);
+  const metaPath   = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) throw new Error('Asset not found: ' + assetId);
+
+  const destFile = path.join(assetDir, path.basename(filePath));
+  try {
+    fs.renameSync(filePath, destFile);
+  } catch (err) {
+    if (err.code === 'EXDEV') {
+      fs.copyFileSync(filePath, destFile);
+      fs.unlinkSync(filePath);
+    } else throw err;
+  }
+
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  meta.files = [path.basename(destFile)];
+  meta.downloadStatus = 'complete';
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  return { assetId, meta };
+}
+
+module.exports = { importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile, registerTags, createAssetShell, finalizeAssetDownload };

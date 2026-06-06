@@ -69,8 +69,42 @@ function cleanPageTitle(raw) {
     .trim();
 }
 
+function extractBoothItemId(url) {
+  try {
+    const m = new URL(url).pathname.match(/\/items\/(\d+)/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+async function fetchBoothJson(itemId) {
+  try {
+    const body = await fetchHtml(`https://booth.pm/en/items/${itemId}.json`);
+    return JSON.parse(body);
+  } catch { return null; }
+}
+
 async function scrapePageMeta(originUrl) {
   let html;
+
+  // ── Booth fast-path: use the JSON API for complete data ──────────────────
+  const boothId = extractBoothItemId(originUrl);
+  if (boothId) {
+    const data = await fetchBoothJson(boothId);
+    if (data) {
+      const name = data.name || extractNameFromUrl(originUrl);
+      const tags = Array.isArray(data.tags) ? data.tags.map(t => t.name).filter(Boolean) : [];
+      const images = [];
+      const seen = new Set();
+      if (Array.isArray(data.images)) {
+        for (const img of data.images) {
+          const url = img.original || img.resized;
+          if (url && !seen.has(url)) { seen.add(url); images.push({ url, source: 'booth-api' }); }
+        }
+      }
+      return { name, images, tags };
+    }
+  }
+
   try {
     html = await fetchHtml(originUrl);
   } catch (err) {
@@ -114,7 +148,44 @@ async function scrapePageMeta(originUrl) {
     images.push({ url: resolved, source: 'img', alt: $(el).attr('alt') || '' });
   });
 
-  return { name, images };
+  // ── Tags ──
+  const tags = [];
+  const tagsSeen = new Set();
+
+  function addFoundTag(t) {
+    t = t.trim();
+    if (t && t.length < 80 && !tagsSeen.has(t)) { tagsSeen.add(t); tags.push(t); }
+  }
+
+  // Booth.pm: tag name is in the URL param (text is JS-rendered and empty)
+  // href="...?tags%5B%5D=TagName" or "...?tags[]=TagName"
+  $('a[href*="tags%5B%5D="], a[href*="tags[]="]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    try {
+      const u = new URL(href, base);
+      const tag = u.searchParams.get('tags[]');
+      if (tag) addFoundTag(decodeURIComponent(tag));
+    } catch {
+      // fallback: parse manually
+      const m = href.match(/tags(?:%5B%5D|\[\])=([^&]+)/i);
+      if (m) addFoundTag(decodeURIComponent(m[1]));
+    }
+  });
+
+  // Generic: rel="tag" links (WordPress, etc.)
+  $('a[rel="tag"]').each((_, el) => {
+    const text = $(el).text().trim();
+    if (text) addFoundTag(text);
+  });
+
+  // Generic: common tag list patterns where text is available
+  if (tags.length === 0) {
+    $('ul.tags li a, .tag-list a, .tags a, [class*="tag-list"] a').each((_, el) => {
+      addFoundTag($(el).text().trim());
+    });
+  }
+
+  return { name, images, tags };
 }
 
 // Keep scrapeImages as a thin wrapper for backwards compat
@@ -123,4 +194,4 @@ async function scrapeImages(originUrl) {
   return result;
 }
 
-module.exports = { scrapeImages, scrapePageMeta, extractNameFromUrl };
+module.exports = { scrapeImages, scrapePageMeta, extractNameFromUrl, extractBoothItemId };

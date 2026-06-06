@@ -10,17 +10,25 @@
   <div class="topbar">
     <img src="../assets/icon.png" class="topbar-icon" alt="" />
     <h1>BB's LibMan</h1>
-    <input type="search" id="search" placeholder="Search assets…" />
-    <div id="dl-progress" style="display:none;">
-      <span id="dl-label" class="dl-label"></span>
-      <div class="dl-bar-track"><div id="dl-bar" class="dl-bar"></div></div>
-      <span id="dl-pct" class="dl-pct">0%</span>
+    <div class="search-wrap">
+      <input type="search" id="search" placeholder="Search assets…" />
+      <button class="btn-ghost btn-filter" id="btn-filter" title="Filter by tag">⌖ Tags</button>
+      <div id="filter-dropdown" class="filter-dropdown" style="display:none;">
+        <input type="search" id="filter-tag-search" placeholder="Search tags…" autocomplete="off" />
+        <div id="filter-tag-list" class="filter-tag-list"></div>
+      </div>
     </div>
     <div class="spacer"></div>
     <span id="asset-count" class="asset-count" title=""></span>
     <button class="btn-ghost" id="btn-sort" title="Sort order">⇅ Date</button>
     <button class="btn-ghost" id="btn-view" title="View mode">⊞ Grid</button>
     <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
+  </div>
+
+  <div id="tag-filter-bar" style="display:none;">
+    <span class="tag-filter-label">Filter:</span>
+    <div id="tag-filter-chips"></div>
+    <button class="btn-ghost tag-filter-clear" id="btn-clear-tag-filter" style="font-size:11px; padding:2px 8px;">✕ Clear</button>
   </div>
 
   <div id="library">
@@ -31,9 +39,38 @@
     <div class="asset-grid" id="asset-grid"></div>
   </div>
 
+  <div id="pagination-bar">
+    <div class="pagination-info" id="pagination-info"></div>
+    <div class="pagination-controls">
+      <button class="btn-ghost pag-btn" id="btn-first" title="First page">«</button>
+      <button class="btn-ghost pag-btn" id="btn-prev" title="Previous page">‹</button>
+      <div class="pag-pages" id="pag-pages"></div>
+      <button class="btn-ghost pag-btn" id="btn-next" title="Next page">›</button>
+      <button class="btn-ghost pag-btn" id="btn-last" title="Last page">»</button>
+    </div>
+    <div class="pagination-size">
+      <span>Per page:</span>
+      <button class="btn-ghost pag-size-btn" data-size="10">10</button>
+      <button class="btn-ghost pag-size-btn" data-size="30">30</button>
+      <button class="btn-ghost pag-size-btn" data-size="50">50</button>
+    </div>
+  </div>
+
   <footer class="app-footer">
-    Made with ♥ for R.S. by BunBnnuy &nbsp;·&nbsp;
-    <a href="https://github.com/BunBnnuy/BBLM" class="footer-link">view BBLM repo</a>
+    <div class="footer-progress-area">
+      <div id="dl-progress" style="display:none;">
+        <div class="dl-bar-track"><div id="dl-bar" class="dl-bar"></div></div>
+        <span id="dl-pct" class="dl-pct">0%</span>
+        <span id="dl-label" class="dl-label"></span>
+      </div>
+      <div id="queue-panel" style="display:none;">
+        <div id="queue-active"></div>
+      </div>
+    </div>
+    <div class="footer-credits">
+      Made with ♥ for R.S. by BunBnnuy &nbsp;·&nbsp;
+      <a href="https://github.com/BunBnnuy/BBLM" class="footer-link">view BBLM repo</a>
+    </div>
   </footer>
 
   <div id="drop-overlay">

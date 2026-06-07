@@ -212,30 +212,143 @@ btnSort.addEventListener('click', () => {
   loadLibrary(searchInput.value);
 });
 
-// ── Drag & drop ─────────────────────────────────────────────────────────────
-const dropOverlay = document.getElementById('drop-overlay');
-let dragCounter = 0; // track nested dragenter/dragleave pairs
+// ── Drag & drop — two-zone system ────────────────────────────────────────────
+const dropOverlay     = document.getElementById('drop-overlay');
+const dropZoneNew     = document.getElementById('drop-zone-new');
+const dropZoneExist   = document.getElementById('drop-zone-existing');
+const dropZoneTimer   = document.getElementById('drop-zone-timer');
 
+let dragCounter      = 0;
+let existHoverTimer  = null;   // 500ms timer
+let existTimerRAF    = null;   // animation frame for conic fill
+let existTimerStart  = null;
+let addToExistMode   = false;  // true after 500ms hover on right box
+const EXIST_DELAY    = 500;
+
+function resetDragState() {
+  dragCounter = 0;
+  addToExistMode = false;
+  clearExistTimer();
+  dropOverlay.classList.remove('visible', 'fade-back');
+  dropZoneNew.classList.remove('hover');
+  dropZoneExist.classList.remove('hover');
+  dropZoneTimer.classList.remove('counting');
+  dropZoneTimer.style.background = '';
+  // Remove card drop-target styles
+  document.querySelectorAll('.asset-card.drop-target, .asset-card.drop-over')
+    .forEach(c => c.classList.remove('drop-target', 'drop-over'));
+}
+
+function clearExistTimer() {
+  if (existHoverTimer)  { clearTimeout(existHoverTimer);  existHoverTimer  = null; }
+  if (existTimerRAF)    { cancelAnimationFrame(existTimerRAF); existTimerRAF = null; }
+  existTimerStart = null;
+  dropZoneTimer.classList.remove('counting');
+  dropZoneTimer.style.background = '';
+}
+
+function startExistTimer() {
+  clearExistTimer();
+  dropZoneTimer.classList.add('counting');
+  existTimerStart = performance.now();
+
+  function tick(now) {
+    const elapsed = now - existTimerStart;
+    const pct     = Math.min(elapsed / EXIST_DELAY, 1);
+    const deg     = Math.round(pct * 360);
+    dropZoneTimer.style.background = `conic-gradient(var(--accent2) ${deg}deg, rgba(255,255,255,.1) ${deg}deg)`;
+    if (pct < 1) existTimerRAF = requestAnimationFrame(tick);
+  }
+  existTimerRAF = requestAnimationFrame(tick);
+
+  existHoverTimer = setTimeout(() => {
+    addToExistMode = true;
+    clearExistTimer();
+    // Fade back the overlay, let cards be drop targets
+    dropOverlay.classList.add('fade-back');
+    document.querySelectorAll('.asset-card[data-asset-id]')
+      .forEach(c => c.classList.add('drop-target'));
+  }, EXIST_DELAY);
+}
+
+// ── Document-level drag events ──
 document.addEventListener('dragenter', e => {
   e.preventDefault();
   dragCounter++;
-  dropOverlay.classList.add('visible');
+  if (!addToExistMode) dropOverlay.classList.add('visible');
 });
 
-document.addEventListener('dragleave', () => {
+document.addEventListener('dragleave', e => {
   dragCounter--;
-  if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('visible'); }
+  if (dragCounter <= 0 && !addToExistMode) {
+    resetDragState();
+  }
 });
 
 document.addEventListener('dragover', e => e.preventDefault());
 
 document.addEventListener('drop', e => {
   e.preventDefault();
-  dragCounter = 0;
-  dropOverlay.classList.remove('visible');
-  // Path resolution + modal opening is handled in preload.js (capture phase)
-  // to avoid File object cloning through contextBridge
+  if (!addToExistMode) resetDragState();
+  // File path resolved in preload capture-phase listener
 });
+
+// ── Zone hover events ──
+dropZoneNew.addEventListener('dragenter', () => {
+  if (addToExistMode) return;
+  clearExistTimer();
+  dropZoneNew.classList.add('hover');
+  dropZoneExist.classList.remove('hover');
+});
+dropZoneNew.addEventListener('dragleave', () => dropZoneNew.classList.remove('hover'));
+dropZoneNew.addEventListener('drop', () => {
+  // preload handles the actual import modal opening
+  resetDragState();
+});
+
+dropZoneExist.addEventListener('dragenter', () => {
+  if (addToExistMode) return;
+  dropZoneExist.classList.add('hover');
+  dropZoneNew.classList.remove('hover');
+  startExistTimer();
+});
+dropZoneExist.addEventListener('dragleave', () => {
+  if (addToExistMode) return;
+  dropZoneExist.classList.remove('hover');
+  clearExistTimer();
+});
+dropZoneExist.addEventListener('drop', e => {
+  e.stopPropagation();
+  resetDragState();
+  // Dropped on right box but no card chosen — do nothing
+});
+
+// ── Card drop targets (add-to-existing mode) ──
+document.addEventListener('dragenter', e => {
+  if (!addToExistMode) return;
+  const card = e.target.closest('.asset-card[data-asset-id]');
+  if (card) {
+    document.querySelectorAll('.asset-card.drop-over').forEach(c => c.classList.remove('drop-over'));
+    card.classList.add('drop-over');
+  }
+}, true);
+
+document.addEventListener('dragleave', e => {
+  if (!addToExistMode) return;
+  const card = e.target.closest('.asset-card[data-asset-id]');
+  if (card && !card.contains(e.relatedTarget)) card.classList.remove('drop-over');
+}, true);
+
+document.addEventListener('drop', e => {
+  if (!addToExistMode) return;
+  const card = e.target.closest('.asset-card[data-asset-id]');
+  resetDragState();
+  if (card && card.dataset.assetId) {
+    window.api.addFileToAsset(card.dataset.assetId, null); // path resolved in preload
+    pendingHighlight = card.dataset.assetId;
+    setTimeout(() => loadLibrary(searchInput.value), 300);
+  }
+}, true);
 
 // ── Context menu ────────────────────────────────────────────────────────────
 const ctxMenu = document.createElement('div');
@@ -269,6 +382,20 @@ function hideCtxMenu() { ctxMenu.style.display = 'none'; }
 
 document.addEventListener('click', hideCtxMenu);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtxMenu(); });
+
+// ── Card glow ────────────────────────────────────────────────────────────────
+let pendingHighlight = null;
+
+function glowCard(assetId) {
+  if (!assetId) return;
+  const card = document.querySelector(`.asset-card[data-asset-id="${assetId}"]`);
+  if (!card) return;
+  card.classList.remove('glow');
+  void card.offsetWidth; // force reflow to restart animation
+  card.classList.add('glow');
+  card.addEventListener('animationend', () => card.classList.remove('glow'), { once: true });
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
 
 // ── Library ──────────────────────────────────────────────────────────────────
 async function loadLibrary(filter = '') {
@@ -464,6 +591,13 @@ async function loadLibrary(filter = '') {
 
     grid.appendChild(card);
   }
+
+  // Glow the card that was just modified
+  if (pendingHighlight) {
+    const id = pendingHighlight;
+    pendingHighlight = null;
+    requestAnimationFrame(() => glowCard(id));
+  }
 }
 
 function escHtml(str) {
@@ -476,6 +610,7 @@ const pendingDownloads = {}; // assetId → percent
 window.api.onAssetDownloadProgress(({ assetId, percent, done }) => {
   if (done) {
     delete pendingDownloads[assetId];
+    pendingHighlight = assetId;
   } else {
     pendingDownloads[assetId] = percent;
   }
@@ -555,7 +690,10 @@ document.getElementById('btn-settings').addEventListener('click', () => {
   window.location.href = 'settings.html';
 });
 
-window.api.onRefreshLibrary(() => loadLibrary(searchInput.value));
+window.api.onRefreshLibrary(({ assetId } = {}) => {
+  if (assetId) pendingHighlight = assetId;
+  loadLibrary(searchInput.value);
+});
 
 updateSortButton();
 applyViewMode();

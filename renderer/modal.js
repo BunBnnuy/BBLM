@@ -219,7 +219,7 @@ btnImport.addEventListener('click', async () => {
     try {
       const result = await window.api.updateAsset({ assetId: editAssetId, name: assetName, originUrl, selectedImageUrl, tags });
       setStatus('✔ Saved "' + result.meta.name + '"', 'success');
-      window.api.refreshLibrary();
+      window.api.refreshLibrary(result.assetId);
       setTimeout(() => window.api.closeModal(), 1200);
     } catch (err) {
       setStatus('Save failed: ' + err.message, 'error');
@@ -233,7 +233,7 @@ btnImport.addEventListener('click', async () => {
     try {
       const result = await window.api.importAsset({ originUrl, filePath: resolvedFilePath, selectedImageUrl, assetName: assetName || null, tags });
       setStatus('✔ Imported as "' + result.meta.name + '" (ID: ' + result.assetId + ')', 'success');
-      window.api.refreshLibrary();
+      window.api.refreshLibrary(result.assetId);
       setTimeout(() => window.api.closeModal(), 1500);
     } catch (err) {
       setStatus('Import failed: ' + err.message, 'error');

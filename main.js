@@ -135,7 +135,7 @@ class DownloadQueue {
     if (item.cancelled) return;
 
     const shell = await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, store });
-    if (mainWindow) mainWindow.webContents.send('refresh-library');
+    if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
 
     if (item.cancelled) {
       // Clean up shell if cancelled before download
@@ -157,7 +157,7 @@ class DownloadQueue {
 
     if (mainWindow) {
       mainWindow.webContents.send('asset-download-progress', { assetId: shell.assetId, percent: 100, done: true });
-      mainWindow.webContents.send('refresh-library');
+      mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
       mainWindow.setTitle(`BB's LibMan`);
     }
 
@@ -679,6 +679,28 @@ ipcMain.handle('get-scheme-status', () => {
   return result;
 });
 
+ipcMain.handle('add-file-to-asset', (event, { assetId, filePath }) => {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir   = path.join(rootFolder, assetId);
+  const metaPath   = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) return { error: 'Asset not found' };
+
+  const fileName = path.basename(filePath);
+  const destFile = path.join(assetDir, fileName);
+  try {
+    fs.renameSync(filePath, destFile);
+  } catch (err) {
+    if (err.code === 'EXDEV') { fs.copyFileSync(filePath, destFile); fs.unlinkSync(filePath); }
+    else return { error: err.message };
+  }
+
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  if (!meta.files) meta.files = [];
+  if (!meta.files.includes(fileName)) meta.files.push(fileName);
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  return { assetId, fileName };
+});
+
 ipcMain.handle('open-import-modal', (event, filePath) => {
   console.log('[open-import-modal] called with:', filePath);
   const fileName = path.basename(filePath);
@@ -734,6 +756,6 @@ ipcMain.on('close-modal', () => {
   if (modalWindow) modalWindow.close();
 });
 
-ipcMain.on('refresh-library', () => {
-  if (mainWindow) mainWindow.webContents.send('refresh-library');
+ipcMain.on('refresh-library', (event, data) => {
+  if (mainWindow) mainWindow.webContents.send('refresh-library', data || {});
 });

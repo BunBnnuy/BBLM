@@ -6,12 +6,33 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 window.addEventListener('drop', (e) => {
   const file = e.dataTransfer && e.dataTransfer.files[0];
   if (!file) return;
+  let filePath;
   try {
-    const filePath = webUtils.getPathForFile(file);
+    filePath = webUtils.getPathForFile(file);
     console.log('[preload drop] resolved path:', filePath);
-    if (filePath) ipcRenderer.invoke('open-import-modal', filePath);
   } catch (err) {
     console.error('[preload drop] error:', err.message);
+    return;
+  }
+  if (!filePath) return;
+
+  const overlay = document.getElementById('drop-overlay');
+  const addToExistMode = overlay && overlay.classList.contains('fade-back');
+
+  // In add-to-existing mode: only act if dropped on a card
+  if (addToExistMode) {
+    const card = e.target && e.target.closest && e.target.closest('.asset-card[data-asset-id]');
+    if (card && card.dataset.assetId) {
+      ipcRenderer.invoke('add-file-to-asset', { assetId: card.dataset.assetId, filePath });
+    }
+    // Drop anywhere else in add-to-existing mode → do nothing
+    return;
+  }
+
+  // Normal mode: open import modal (skip if dropped on the right zone)
+  const onExistingZone = e.target && e.target.closest && e.target.closest('#drop-zone-existing');
+  if (!onExistingZone) {
+    ipcRenderer.invoke('open-import-modal', filePath);
   }
 }, true); // capture phase — fires before renderer handlers
 
@@ -34,13 +55,14 @@ contextBridge.exposeInMainWorld('api', {
   updateAsset: (opts) => ipcRenderer.invoke('update-asset', opts),
   openEditModal: (asset) => ipcRenderer.invoke('open-edit-modal', asset),
   openImportModal: (filePath) => ipcRenderer.invoke('open-import-modal', filePath),
+  addFileToAsset: (assetId, filePath) => ipcRenderer.invoke('add-file-to-asset', { assetId, filePath }),
   setWindowTitle: (suffix) => ipcRenderer.invoke('set-window-title', suffix),
   getSchemeStatus: () => ipcRenderer.invoke('get-scheme-status'),
   setScheme: (scheme, enabled) => ipcRenderer.invoke('set-scheme', { scheme, enabled }),
   closeModal: () => ipcRenderer.send('close-modal'),
-  refreshLibrary: () => ipcRenderer.send('refresh-library'),
+  refreshLibrary: (assetId) => ipcRenderer.send('refresh-library', assetId ? { assetId } : {}),
   onImportData: (cb) => ipcRenderer.on('import-data', (event, data) => cb(data)),
-  onRefreshLibrary: (cb) => ipcRenderer.on('refresh-library', () => cb()),
+  onRefreshLibrary: (cb) => ipcRenderer.on('refresh-library', (event, data) => cb(data || {})),
   onDownloadProgress: (cb) => ipcRenderer.on('download-progress', (event, data) => cb(data)),
   onAssetDownloadProgress: (cb) => ipcRenderer.on('asset-download-progress', (event, data) => cb(data)),
   getQueue: () => ipcRenderer.invoke('get-queue'),

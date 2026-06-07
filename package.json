@@ -1,6 +1,6 @@
 {
   "name": "bbs-libman",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "BB's Library Manager for 3D model and game asset downloads",
   "main": "main.js",
   "scripts": {

@@ -74,9 +74,16 @@
   </footer>
 
   <div id="drop-overlay">
-    <div class="drop-overlay-inner">
-      <div class="drop-icon">📦</div>
-      <div class="drop-label">Drop file to import</div>
+    <div class="drop-zone" id="drop-zone-new">
+      <div class="drop-zone-icon">📦</div>
+      <div class="drop-zone-label">Add New Asset</div>
+      <div class="drop-zone-sub">Drop to open import dialog</div>
+    </div>
+    <div class="drop-zone" id="drop-zone-existing">
+      <div class="drop-zone-icon">🗂</div>
+      <div class="drop-zone-label">Add to Existing Asset</div>
+      <div class="drop-zone-sub">Hold here to pick a card</div>
+      <div class="drop-zone-timer" id="drop-zone-timer"></div>
     </div>
   </div>
 

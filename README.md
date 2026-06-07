@@ -20,17 +20,20 @@
 - Search assets by name and sort by date or alphabetically
 - **Pagination** — configurable page size (10, 30, or 50 items per page)
 - Asset counter in the toolbar showing total count, with a hover breakdown of local vs Booth items
+- Modified cards **glow** briefly to highlight which asset was just changed or added
 
 ### 🏷 Tag System
 - Assets can have multiple tags — local assets get tags from the import dialog, Booth items get them from their database
-- When scraping a Booth URL, all item tags are fetched automatically from the Booth API
+- When scraping a Booth URL, all item tags are fetched automatically from the Booth JSON API
 - **Tag filter** — click the ⌖ Tags button to open a searchable tag panel; select one or more tags to filter the library (AND logic)
 - Click any tag pill on a card to instantly filter by that tag
-- Tags are editable at any time from the Edit dialog
+- Tags are editable at any time from the Edit dialog with autocomplete suggestions
 
 ### 📥 Importing Assets
 - **Downloads Monitor** — watches your downloads folder and automatically opens the import dialog when a supported file is detected
-- **Drag & Drop** — drag any file directly onto the app window to open the import dialog
+- **Drag & Drop** — drag a file onto the window to choose between two actions:
+  - **Add New Asset** (left zone) — opens the import dialog
+  - **Add to Existing Asset** (right zone) — hover for 500ms to activate card drop targets, then drop the file directly onto any card to add it to that asset's folder without any dialog
 - **URL Scraping** — paste a Booth URL to automatically fetch the asset name, tags, and thumbnail via the Booth JSON API; other sites use HTML scraping
 - Thumbnails are downloaded and transcoded to 500×500 PNG at import time
 

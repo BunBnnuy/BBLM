@@ -274,6 +274,16 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   transition: border-color .15s, transform .15s;
 }
 .asset-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+
+.asset-card.glow {
+  animation: card-glow 1.6s ease-out forwards;
+}
+@keyframes card-glow {
+  0%   { box-shadow: 0 0 0 0 rgba(233,69,96,0);   border-color: var(--accent); }
+  25%  { box-shadow: 0 0 18px 6px rgba(233,69,96,.55); border-color: var(--accent); }
+  60%  { box-shadow: 0 0 12px 3px rgba(233,69,96,.3);  border-color: var(--accent); }
+  100% { box-shadow: 0 0 0 0 rgba(233,69,96,0);   border-color: var(--border); }
+}
 .asset-card--booth { border-color: var(--accent2); }
 .asset-card--booth:hover { border-color: #7a54c0; }
 .asset-card--pending { opacity: .55; pointer-events: none; }
@@ -488,31 +498,82 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   position: fixed;
   inset: 0;
   z-index: 8000;
-  background: rgba(14, 20, 40, 0.82);
-  backdrop-filter: blur(4px);
-  align-items: center;
-  justify-content: center;
+  background: rgba(14, 20, 40, 0.88);
+  backdrop-filter: blur(6px);
+  gap: 24px;
+  padding: 40px;
   pointer-events: none;
+  transition: opacity .25s;
 }
 #drop-overlay.visible {
   display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.drop-overlay-inner {
-  border: 3px dashed var(--accent);
+#drop-overlay.fade-back {
+  opacity: .15;
+  pointer-events: none;
+}
+#drop-overlay.fade-back .drop-zone {
+  pointer-events: none;
+}
+
+.drop-zone {
+  flex: 1;
+  max-width: 340px;
+  height: 260px;
+  border: 3px dashed var(--border);
   border-radius: 16px;
-  padding: 48px 72px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  animation: drop-pulse 1s ease-in-out infinite alternate;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: all;
+  transition: border-color .15s, background .15s, transform .15s;
+  position: relative;
+  overflow: hidden;
 }
-.drop-icon { font-size: 56px; line-height: 1; }
-.drop-label { font-size: 20px; font-weight: 600; color: var(--text); letter-spacing: .3px; }
+.drop-zone:hover,
+.drop-zone.hover {
+  border-color: var(--accent);
+  background: rgba(233,69,96,.07);
+  transform: scale(1.02);
+}
+#drop-zone-existing.hover {
+  border-color: var(--accent2);
+  background: rgba(83,52,131,.12);
+}
+.drop-zone-icon  { font-size: 48px; line-height: 1; pointer-events: none; }
+.drop-zone-label { font-size: 17px; font-weight: 700; color: var(--text); pointer-events: none; }
+.drop-zone-sub   { font-size: 12px; color: var(--text-dim); pointer-events: none; }
 
-@keyframes drop-pulse {
-  from { border-color: var(--accent); box-shadow: 0 0 0 0 rgba(233,69,96,0); }
-  to   { border-color: #ff6b86;       box-shadow: 0 0 24px 4px rgba(233,69,96,.35); }
+/* Circular fill timer on the right box */
+.drop-zone-timer {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent2) 0deg, transparent 0deg);
+  transition: none;
+  pointer-events: none;
+  opacity: 0;
+}
+.drop-zone-timer.counting { opacity: 1; }
+
+/* Card drop-target state */
+.asset-card.drop-target {
+  outline: 2px dashed var(--accent2);
+  outline-offset: 3px;
+  transform: scale(1.03);
+  transition: outline .1s, transform .1s;
+}
+.asset-card.drop-over {
+  outline: 3px solid var(--accent2);
+  background: rgba(83,52,131,.18);
 }
 
 /* ── Context menu ── */

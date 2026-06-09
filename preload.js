@@ -71,4 +71,18 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   getAllTags: () => ipcRenderer.invoke('get-all-tags'),
   setAssetTags: (assetId, tags) => ipcRenderer.invoke('set-asset-tags', { assetId, tags }),
+  // Free Items
+  getFreeItemsConfig: () => ipcRenderer.invoke('get-free-items-config'),
+  setFreeItemsConfig: (config) => ipcRenderer.invoke('set-free-items-config', config),
+  getDownloadedFreeItems: () => ipcRenderer.invoke('get-downloaded-free-items'),
+  keepFreeItem: (assetId) => ipcRenderer.invoke('keep-free-item', assetId),
+  deleteFreeItem: (assetId) => ipcRenderer.invoke('delete-free-item', assetId),
+  startFreeScan: () => ipcRenderer.invoke('start-free-scan'),
+  stopFreeScan: () => ipcRenderer.invoke('stop-free-scan'),
+  getFoundFreeItems: () => ipcRenderer.invoke('get-found-free-items'),
+  downloadFreeItem: (deeplinkUrl) => ipcRenderer.invoke('download-free-item', deeplinkUrl),
+  getLibraryItemIds: () => ipcRenderer.invoke('get-library-item-ids'),
+  onFreeItemsProgress: (cb) => ipcRenderer.on('free-items-progress', (event, data) => cb(data)),
+  onFreeItemDownloaded: (cb) => ipcRenderer.on('free-item-downloaded', (event, data) => cb(data)),
+  onFreeItemFound: (cb) => ipcRenderer.on('free-item-found', (event, data) => cb(data)),
 });

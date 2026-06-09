@@ -44,6 +44,18 @@
 - Clicking a Booth item opens its local download folder (if configured)
 - Hide individual Booth items independently of your local library
 
+### 🆓 Booth Free Items
+A dedicated tab that automatically scans Booth.pm for ¥0 VRChat items:
+
+- **Smart detection** — visits each item page and checks all variation prices, so items that are partially free (e.g. "¥0 – ¥300") are caught even when the listing shows a non-zero price
+- **Price range display** — shows the full price range when an item has both free and paid tiers
+- **Paginated list** — thumbnail, name, and price shown in a clean 20-item paginated list; click any row to open the item on Booth
+- **One-click download** — the Download button triggers the full download flow internally (no browser tab opens); a Booth login window appears automatically the first time if needed, and the session is remembered for all future downloads
+- **"In Library" detection** — if an item is already in your BBLM library the button is automatically grayed out with "✔ In Library" text, updating live as downloads complete
+- **Auto-scan** — configure an interval (1–24 hours) to scan automatically in the background, or trigger a manual scan at any time
+- **Configurable depth** — set how many listing pages to scan (default 5, max 20)
+- **Polite scraping** — 3–5 second random delay between item page requests to avoid overloading Booth's servers
+
 ### 🔗 URL Protocol Handlers
 Register BB's LibMan as the default handler for custom URL schemes, enabling fully automatic one-click importing from external apps:
 
@@ -173,11 +185,13 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 ├── preload.js               # Context bridge (main ↔ renderer)
 ├── src/
 │   ├── assetManager.js      # Import, update, delete, shell creation, meta.json
+│   ├── boothFreeScraper.js  # Booth free-item scanner (listing + per-page variation check)
 │   ├── downloadsMonitor.js  # fs.watch + file stability poller
 │   ├── fileWatcher.js       # One-shot file wait (manual import)
 │   └── scraper.js           # Booth JSON API + HTML scraper (title, images, tags)
 ├── renderer/
 │   ├── index.html / app.js          # Main library view + pagination + tag filter
+│   ├── freeItems.js                 # Booth Free Items tab logic
 │   ├── modal.html / modal.js        # Import / edit dialog with tag editor
 │   ├── settings.html / settings.js  # Settings page
 │   └── styles.css

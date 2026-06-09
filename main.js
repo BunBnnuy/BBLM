@@ -16,6 +16,8 @@ console.log('[main] gotTheLock:', gotTheLock);
 let mainWindow = null;
 let modalWindow = null;
 let tray = null;
+let freeItemsTimer = null;
+let freeItemsScanCancelled = false;
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 
@@ -155,9 +157,34 @@ class DownloadQueue {
 
     finalizeAssetDownload({ assetId: shell.assetId, filePath: destPath, store });
 
+    // If this came from the free items scraper, mark it as pending review
+    if (item.freeItemPending) {
+      const rootFolder = store.get('rootFolder', '');
+      const metaPath = path.join(rootFolder, shell.assetId, 'meta.json');
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        meta.freeItemPending = true;
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+      }
+      const freeEntry = {
+        assetId: shell.assetId,
+        name: shell.meta.name,
+        thumbnailPath: shell.meta.thumbnail
+          ? path.join(store.get('rootFolder', ''), shell.assetId, shell.meta.thumbnail)
+          : null,
+        boothUrl: originUrl,
+        downloadedAt: new Date().toISOString(),
+      };
+      const existing = store.get('downloadedFreeItems', []);
+      if (!existing.find(e => e.assetId === shell.assetId)) {
+        store.set('downloadedFreeItems', [...existing, freeEntry]);
+      }
+      if (mainWindow) mainWindow.webContents.send('free-item-downloaded', freeEntry);
+    }
+
     if (mainWindow) {
       mainWindow.webContents.send('asset-download-progress', { assetId: shell.assetId, percent: 100, done: true });
-      mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
+      if (!item.freeItemPending) mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
       mainWindow.setTitle(`BB's LibMan`);
     }
 
@@ -181,7 +208,7 @@ function handleUrl(url) {
   }
 }
 
-function handleBoothDownloadUrl(url) {
+function handleBoothDownloadUrl(url, freeItemPending = false) {
   console.log('[booth-download] queuing:', url);
 
   const withProto = url
@@ -202,7 +229,7 @@ function handleBoothDownloadUrl(url) {
   if (!dlUrl) { console.error('[booth-download] missing dlurl'); return; }
 
   const originUrl = itemId ? `https://booth.pm/en/items/${itemId}` : '';
-  const queueId = downloadQueue.add({ dlUrl, fileName, itemId, originUrl });
+  const queueId = downloadQueue.add({ dlUrl, fileName, itemId, originUrl, freeItemPending });
   console.log(`[booth-download] added to queue as #${queueId} (${downloadQueue.queue.length + 1} total)`);
 }
 
@@ -232,6 +259,9 @@ if (!gotTheLock) {
     if (store.get('monitorEnabled', false)) {
       monitor.start(store.get('downloadsFolder', app.getPath('downloads')));
     }
+
+    // Schedule free items auto-scan if interval is set
+    scheduleFreeItemsInterval();
   });
 
   app.on('before-quit', () => { app.isQuitting = true; });
@@ -363,6 +393,7 @@ function createMainWindow() {
     minWidth: 800,
     minHeight: 600,
     icon: ICON,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -564,7 +595,7 @@ ipcMain.handle('pick-folder', async () => {
 ipcMain.handle('get-assets', () => {
   const { getAssets } = require('./src/assetManager');
   const hidden = store.get('hiddenAssets', []);
-  return getAssets(store).filter(a => !hidden.includes(a.id));
+  return getAssets(store).filter(a => !hidden.includes(a.id) && !a.freeItemPending);
 });
 
 ipcMain.handle('hide-asset', (event, assetId) => {
@@ -759,3 +790,188 @@ ipcMain.on('close-modal', () => {
 ipcMain.on('refresh-library', (event, data) => {
   if (mainWindow) mainWindow.webContents.send('refresh-library', data || {});
 });
+
+// ── Booth Free Items ──────────────────────────────────────────────────────────
+
+/**
+ * Navigate to a Booth deeplink URL in a hidden BrowserWindow that uses a
+ * persistent partition so the session survives across calls.
+ * Intercepts the booth-library-manager:// redirect and queues the download.
+ * If the session isn't authenticated, the window becomes visible so the user
+ * can log in; after sign-in we automatically retry the deeplink.
+ */
+function downloadFreeItemInternal(deeplinkUrl) {
+  return new Promise((resolve, reject) => {
+    const win = new BrowserWindow({
+      width: 520,
+      height: 660,
+      show: false,
+      parent: mainWindow || undefined,
+      icon: ICON,
+      webPreferences: {
+        partition: 'persist:booth-auth',
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+      title: 'Booth — Sign In',
+      autoHideMenuBar: true,
+    });
+
+    let done = false;
+
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      if (!win.isDestroyed()) win.destroy();
+      err ? reject(err) : resolve();
+    };
+
+    const loadDeeplink = () => {
+      if (!win.isDestroyed()) win.loadURL(deeplinkUrl);
+    };
+
+    // Intercept the scheme redirect before the OS handles it
+    win.webContents.on('will-redirect', (event, url) => {
+      if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
+        event.preventDefault();
+        handleBoothDownloadUrl(url, false);
+        finish(null);
+      }
+    });
+
+    win.webContents.on('did-navigate', (event, url) => {
+      if (done) return;
+      const isSignIn = /\/users\/sign_in|\/login/i.test(url);
+      if (isSignIn) {
+        // Need credentials — show the window
+        if (!win.isVisible()) win.show();
+      } else if (win.isVisible() && url.includes('booth.pm')) {
+        // User just logged in; retry the deeplink
+        setTimeout(loadDeeplink, 400);
+      }
+    });
+
+    win.on('closed', () => {
+      if (!done) finish(new Error('Login window closed before download started'));
+    });
+
+    const timeoutId = setTimeout(() => finish(new Error('Booth download timed out')), 60000);
+    win.on('close', () => clearTimeout(timeoutId));
+
+    loadDeeplink();
+  });
+}
+
+ipcMain.handle('download-free-item', async (event, deeplinkUrl) => {
+  try {
+    await downloadFreeItemInternal(deeplinkUrl);
+    return { ok: true };
+  } catch (err) {
+    console.error('[download-free-item]', err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-library-item-ids', () => {
+  const { getAssets } = require('./src/assetManager');
+  return getAssets(store)
+    .map(a => { const m = (a.originUrl || '').match(/\/items\/(\d+)/); return m ? parseInt(m[1], 10) : null; })
+    .filter(Boolean);
+});
+
+ipcMain.handle('get-free-items-config', () => ({
+  interval: store.get('freeItemsInterval', 6),
+  maxPages: store.get('freeItemsMaxPages', 5),
+}));
+
+ipcMain.handle('set-free-items-config', (event, config) => {
+  if (config.interval !== undefined) store.set('freeItemsInterval', config.interval);
+  if (config.maxPages !== undefined) store.set('freeItemsMaxPages', config.maxPages);
+  scheduleFreeItemsInterval();
+  return true;
+});
+
+ipcMain.handle('get-downloaded-free-items', () => store.get('downloadedFreeItems', []));
+ipcMain.handle('get-found-free-items', () => store.get('foundFreeItems', []));
+
+ipcMain.handle('keep-free-item', (event, assetId) => {
+  const rootFolder = store.get('rootFolder', '');
+  const metaPath = path.join(rootFolder, assetId, 'meta.json');
+  if (fs.existsSync(metaPath)) {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    delete meta.freeItemPending;
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  }
+  const items = store.get('downloadedFreeItems', []);
+  store.set('downloadedFreeItems', items.filter(i => i.assetId !== assetId));
+  if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId });
+  return true;
+});
+
+ipcMain.handle('delete-free-item', (event, assetId) => {
+  const { deleteAsset } = require('./src/assetManager');
+  deleteAsset({ assetId, store });
+  const items = store.get('downloadedFreeItems', []);
+  store.set('downloadedFreeItems', items.filter(i => i.assetId !== assetId));
+  return true;
+});
+
+ipcMain.handle('start-free-scan', async () => {
+  freeItemsScanCancelled = false;
+  await runFreeItemsScan();
+  return true;
+});
+
+ipcMain.handle('stop-free-scan', () => {
+  freeItemsScanCancelled = true;
+  return true;
+});
+
+async function runFreeItemsScan() {
+  const { scrapeFreeItems } = require('./src/boothFreeScraper');
+  const maxPages = store.get('freeItemsMaxPages', 5);
+
+  freeItemsScanCancelled = false;
+
+  const sendProgress = (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('free-items-progress', data);
+    }
+  };
+
+  sendProgress({ phase: 'started' });
+
+  // Clear previous scan results
+  store.set('foundFreeItems', []);
+
+  try {
+    const result = await scrapeFreeItems({
+      maxPages,
+      isCancelled: () => freeItemsScanCancelled,
+      onProgress: sendProgress,
+      onItem: (item) => {
+        const existing = store.get('foundFreeItems', []);
+        if (!existing.find(e => e.itemId === item.itemId)) {
+          store.set('foundFreeItems', [...existing, item]);
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('free-item-found', item);
+        }
+      },
+    });
+    sendProgress({ phase: 'done', ...result });
+  } catch (err) {
+    console.error('[free-scan] error:', err.message);
+    sendProgress({ phase: 'error', message: err.message });
+  }
+}
+
+function scheduleFreeItemsInterval() {
+  if (freeItemsTimer) { clearTimeout(freeItemsTimer); freeItemsTimer = null; }
+  const hours = store.get('freeItemsInterval', 6);
+  if (!hours || hours <= 0) return;
+  freeItemsTimer = setTimeout(async () => {
+    await runFreeItemsScan();
+    scheduleFreeItemsInterval();
+  }, hours * 60 * 60 * 1000);
+}

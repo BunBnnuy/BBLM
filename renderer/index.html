@@ -10,7 +10,11 @@
   <div class="topbar">
     <img src="../assets/icon.png" class="topbar-icon" alt="" />
     <h1>BB's LibMan</h1>
-    <div class="search-wrap">
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="library">BBLM Library</button>
+      <button class="tab-btn" data-tab="free-items">Booth Free Items</button>
+    </div>
+    <div class="search-wrap" id="library-search-wrap">
       <input type="search" id="search" placeholder="Search assets…" />
       <button class="btn-ghost btn-filter" id="btn-filter" title="Filter by tag">⌖ Tags</button>
       <div id="filter-dropdown" class="filter-dropdown" style="display:none;">
@@ -19,40 +23,96 @@
       </div>
     </div>
     <div class="spacer"></div>
-    <span id="asset-count" class="asset-count" title=""></span>
-    <button class="btn-ghost" id="btn-sort" title="Sort order">⇅ Date</button>
-    <button class="btn-ghost" id="btn-view" title="View mode">⊞ Grid</button>
+    <span id="asset-count" class="asset-count library-only" title=""></span>
+    <button class="btn-ghost library-only" id="btn-sort" title="Sort order">⇅ Date</button>
+    <button class="btn-ghost library-only" id="btn-view" title="View mode">⊞ Grid</button>
     <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
   </div>
 
-  <div id="tag-filter-bar" style="display:none;">
-    <span class="tag-filter-label">Filter:</span>
-    <div id="tag-filter-chips"></div>
-    <button class="btn-ghost tag-filter-clear" id="btn-clear-tag-filter" style="font-size:11px; padding:2px 8px;">✕ Clear</button>
+  <!-- Library tab -->
+  <div id="tab-library" class="tab-panel active">
+    <div id="tag-filter-bar" style="display:none;">
+      <span class="tag-filter-label">Filter:</span>
+      <div id="tag-filter-chips"></div>
+      <button class="btn-ghost tag-filter-clear" id="btn-clear-tag-filter" style="font-size:11px; padding:2px 8px;">✕ Clear</button>
+    </div>
+
+    <div id="library">
+      <div class="empty-state" id="empty-state">
+        <h2>No assets yet</h2>
+        <p>Configure your root folder in Settings, then enable the downloads monitor to start importing assets.</p>
+      </div>
+      <div class="asset-grid" id="asset-grid"></div>
+    </div>
+
+    <div id="pagination-bar">
+      <div class="pagination-info" id="pagination-info"></div>
+      <div class="pagination-controls">
+        <button class="btn-ghost pag-btn" id="btn-first" title="First page">«</button>
+        <button class="btn-ghost pag-btn" id="btn-prev" title="Previous page">‹</button>
+        <div class="pag-pages" id="pag-pages"></div>
+        <button class="btn-ghost pag-btn" id="btn-next" title="Next page">›</button>
+        <button class="btn-ghost pag-btn" id="btn-last" title="Last page">»</button>
+      </div>
+      <div class="pagination-size">
+        <span>Per page:</span>
+        <button class="btn-ghost pag-size-btn" data-size="10">10</button>
+        <button class="btn-ghost pag-size-btn" data-size="30">30</button>
+        <button class="btn-ghost pag-size-btn" data-size="50">50</button>
+      </div>
+    </div>
   </div>
 
-  <div id="library">
-    <div class="empty-state" id="empty-state">
-      <h2>No assets yet</h2>
-      <p>Configure your root folder in Settings, then enable the downloads monitor to start importing assets.</p>
+  <!-- Booth Free Items tab -->
+  <div id="tab-free-items" class="tab-panel" style="display:none;">
+    <div class="fi-header">
+      <div class="fi-status-wrap">
+        <span id="fi-status" class="fi-status">Ready</span>
+      </div>
+      <div class="fi-actions">
+        <button class="btn-ghost" id="fi-btn-settings">⚙ Settings</button>
+        <button class="btn-primary" id="fi-btn-scan">▶ Scan Now</button>
+      </div>
     </div>
-    <div class="asset-grid" id="asset-grid"></div>
-  </div>
 
-  <div id="pagination-bar">
-    <div class="pagination-info" id="pagination-info"></div>
-    <div class="pagination-controls">
-      <button class="btn-ghost pag-btn" id="btn-first" title="First page">«</button>
-      <button class="btn-ghost pag-btn" id="btn-prev" title="Previous page">‹</button>
-      <div class="pag-pages" id="pag-pages"></div>
-      <button class="btn-ghost pag-btn" id="btn-next" title="Next page">›</button>
-      <button class="btn-ghost pag-btn" id="btn-last" title="Last page">»</button>
+    <div id="fi-settings-panel" class="fi-settings-panel" style="display:none;">
+      <div class="fi-settings-grid">
+        <div class="fi-settings-row">
+          <label for="fi-interval">Auto-Update Interval</label>
+          <select id="fi-interval">
+            <option value="0">Manual only</option>
+            <option value="1">Every 1 hour</option>
+            <option value="2">Every 2 hours</option>
+            <option value="4">Every 4 hours</option>
+            <option value="6">Every 6 hours</option>
+            <option value="12">Every 12 hours</option>
+            <option value="24">Every 24 hours</option>
+          </select>
+        </div>
+        <div class="fi-settings-row">
+          <label for="fi-max-pages">Max Pages to Scan</label>
+          <input type="number" id="fi-max-pages" min="1" max="20" placeholder="5" />
+        </div>
+      </div>
+      <div class="fi-settings-actions">
+        <button class="btn-primary" id="fi-btn-save-settings">Save Settings</button>
+        <button class="btn-ghost" id="fi-btn-cancel-settings">Cancel</button>
+      </div>
     </div>
-    <div class="pagination-size">
-      <span>Per page:</span>
-      <button class="btn-ghost pag-size-btn" data-size="10">10</button>
-      <button class="btn-ghost pag-size-btn" data-size="30">30</button>
-      <button class="btn-ghost pag-size-btn" data-size="50">50</button>
+
+    <div class="fi-section-title">Free Items Found</div>
+    <div id="fi-empty" class="fi-empty">No free items found yet. Click "Scan Now" to search for ¥0 VRChat items on Booth.</div>
+    <div id="fi-items-list" class="fi-items-list"></div>
+
+    <div id="fi-pagination-bar" class="fi-pagination-bar" style="display:none;">
+      <div class="pagination-info" id="fi-pag-info"></div>
+      <div class="pagination-controls">
+        <button class="btn-ghost pag-btn" id="fi-btn-first">«</button>
+        <button class="btn-ghost pag-btn" id="fi-btn-prev">‹</button>
+        <div class="pag-pages" id="fi-pag-pages"></div>
+        <button class="btn-ghost pag-btn" id="fi-btn-next">›</button>
+        <button class="btn-ghost pag-btn" id="fi-btn-last">»</button>
+      </div>
     </div>
   </div>
 
@@ -65,6 +125,7 @@
       </div>
       <div id="queue-panel" style="display:none;">
         <div id="queue-active"></div>
+        <div id="queue-pending-list"></div>
       </div>
     </div>
     <div class="footer-credits">
@@ -88,5 +149,6 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="freeItems.js"></script>
 </body>
 </html>

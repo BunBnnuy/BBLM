@@ -674,6 +674,7 @@ window.api.onDownloadProgress(({ itemId, percent, done }) => {
   if (done) {
     dlProgress.style.display = 'none';
     window.api.setWindowTitle(null);
+    loadLibrary(searchInput.value);
     return;
   }
   const label = `Downloading booth asset: ${itemId}`;
@@ -693,6 +694,24 @@ document.getElementById('btn-settings').addEventListener('click', () => {
 window.api.onRefreshLibrary(({ assetId } = {}) => {
   if (assetId) pendingHighlight = assetId;
   loadLibrary(searchInput.value);
+});
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+const tabBtns = document.querySelectorAll('.tab-btn');
+
+tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tabId = btn.dataset.tab;
+    tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+    document.querySelectorAll('.tab-panel').forEach(p => {
+      p.style.display = p.id === 'tab-' + tabId ? '' : 'none';
+    });
+    // Show/hide library-only topbar controls
+    const isLibrary = tabId === 'library';
+    document.querySelectorAll('.library-only, #library-search-wrap').forEach(el => {
+      el.style.display = isLibrary ? '' : 'none';
+    });
+  });
 });
 
 updateSortButton();

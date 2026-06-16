@@ -5,6 +5,7 @@ const monitorToggle = document.getElementById('monitor-toggle');
 const boothToggle = document.getElementById('booth-toggle');
 const boothFolderField = document.getElementById('booth-folder-field');
 const boothDownloadsInput = document.getElementById('booth-downloads-folder');
+const notificationsToggle = document.getElementById('notifications-toggle');
 const schemeBoothToggle = document.getElementById('scheme-booth-toggle');
 const schemeBunsToggle = document.getElementById('scheme-buns-toggle');
 const schemeVroidToggle = document.getElementById('scheme-vroid-toggle');
@@ -14,6 +15,13 @@ function setToggleState(enabled) {
   monitorToggle.setAttribute('aria-checked', String(enabled));
   monitorToggle.classList.toggle('btn-primary', enabled);
   monitorToggle.classList.toggle('btn-ghost', !enabled);
+}
+
+function setNotificationsToggle(enabled) {
+  notificationsToggle.textContent = enabled ? 'On' : 'Off';
+  notificationsToggle.setAttribute('aria-checked', String(enabled));
+  notificationsToggle.classList.toggle('btn-primary', enabled);
+  notificationsToggle.classList.toggle('btn-ghost', !enabled);
 }
 
 function setSchemeToggle(btn, enabled) {
@@ -30,6 +38,11 @@ function setBoothToggleState(enabled) {
   boothToggle.classList.toggle('btn-ghost', !enabled);
   boothFolderField.style.display = enabled ? 'block' : 'none';
 }
+
+notificationsToggle.addEventListener('click', () => {
+  const next = notificationsToggle.getAttribute('aria-checked') !== 'true';
+  setNotificationsToggle(next);
+});
 
 monitorToggle.addEventListener('click', async () => {
   const current = monitorToggle.getAttribute('aria-checked') === 'true';
@@ -117,6 +130,7 @@ async function load() {
   const config = await window.api.getConfig();
   rootInput.value = config.rootFolder || '';
   downloadsInput.value = config.downloadsFolder || '';
+  setNotificationsToggle(config.notificationsEnabled !== false);
   setToggleState(config.monitorEnabled || false);
   setBoothToggleState(config.boothEnabled || false);
   boothDownloadsInput.value = config.boothDownloadsFolder || '';
@@ -148,6 +162,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   await window.api.setConfig({
     rootFolder: rootInput.value,
     downloadsFolder: downloadsInput.value,
+    notificationsEnabled: notificationsToggle.getAttribute('aria-checked') === 'true',
     boothEnabled: boothToggle.getAttribute('aria-checked') === 'true',
     boothDownloadsFolder: boothDownloadsInput.value,
   });

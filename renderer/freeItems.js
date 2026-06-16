@@ -13,6 +13,7 @@ const fiList          = document.getElementById('fi-items-list');
 const fiPagBar        = document.getElementById('fi-pagination-bar');
 const fiPagInfo       = document.getElementById('fi-pag-info');
 const fiPagPages      = document.getElementById('fi-pag-pages');
+const fiToggle        = document.getElementById('fi-toggle');
 
 const FI_PAGE_SIZE = 20;
 let scanning        = false;
@@ -24,16 +25,59 @@ function escHtmlFi(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ── Toggle enabled/disabled ──
+function applyEnabledState(enabled) {
+  fiToggle.textContent = enabled ? 'On' : 'Off';
+  fiToggle.setAttribute('aria-checked', enabled);
+  fiToggle.classList.toggle('fi-toggle-off', !enabled);
+  document.querySelectorAll('.fi-enabled-only').forEach(el => {
+    el.style.display = enabled ? '' : 'none';
+  });
+  const body = document.getElementById('tab-free-items');
+  // Show a disabled notice or the normal content
+  let notice = document.getElementById('fi-disabled-notice');
+  if (!enabled) {
+    fiSettingsPanel.style.display = 'none';
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = 'fi-disabled-notice';
+      notice.className = 'fi-empty';
+      notice.textContent = 'Booth Free Items scanning is disabled.';
+      fiList.before(notice);
+    }
+    fiEmpty.style.display = 'none';
+    fiPagBar.style.display = 'none';
+    fiList.style.display = 'none';
+    if (scanning) fiBtnScan.click(); // stop any running scan
+  } else {
+    if (notice) notice.remove();
+    fiList.style.display = '';
+    renderFiPage();
+  }
+}
+
+fiToggle.addEventListener('click', async () => {
+  const nowEnabled = fiToggle.getAttribute('aria-checked') !== 'true';
+  await window.api.setFreeItemsConfig({
+    enabled: nowEnabled,
+    interval: parseInt(fiInterval.value, 10) || 0,
+    maxPages: parseInt(fiMaxPages.value, 10) || 5,
+  });
+  applyEnabledState(nowEnabled);
+});
+
 // ── Load config ──
 async function loadFiConfig() {
   const cfg = await window.api.getFreeItemsConfig();
   fiInterval.value = String(cfg.interval || 6);
   fiMaxPages.value = cfg.maxPages || 5;
+  applyEnabledState(cfg.enabled !== false); // default on
 }
 
 // ── Save config ──
 fiBtnSave.addEventListener('click', async () => {
   await window.api.setFreeItemsConfig({
+    enabled: fiToggle.getAttribute('aria-checked') === 'true',
     interval: parseInt(fiInterval.value, 10) || 0,
     maxPages: parseInt(fiMaxPages.value, 10) || 5,
   });

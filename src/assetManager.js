@@ -52,7 +52,16 @@ function normalizeUrl(url) {
   return url;
 }
 
-function downloadFile(url, destPath) {
+function refererForUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    if (hostname.endsWith('pximg.net')) return 'https://booth.pm/';
+    if (hostname.endsWith('booth.pm'))  return 'https://booth.pm/';
+  } catch {}
+  return null;
+}
+
+function downloadFile(url, destPath, extraHeaders = {}) {
   url = normalizeUrl(url);
   return new Promise((resolve, reject) => {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -60,8 +69,13 @@ function downloadFile(url, destPath) {
     }
     const proto = url.startsWith('https') ? https : http;
     const file = fs.createWriteStream(destPath);
+    const referer = refererForUrl(url);
     const options = {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ...(referer ? { Referer: referer } : {}),
+        ...extraHeaders,
+      },
     };
     proto.get(url, options, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -70,7 +84,7 @@ function downloadFile(url, destPath) {
         const redirectUrl = normalizeUrl(res.headers.location.startsWith('/')
           ? new URL(res.headers.location, url).href
           : res.headers.location);
-        return downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
+        return downloadFile(redirectUrl, destPath, extraHeaders).then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) {
         file.close();
@@ -129,9 +143,11 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, t
         .toFile(thumbnailPath);
       fs.unlinkSync(rawPath);
     } catch (e) {
-      console.warn('Thumbnail processing failed:', e.message);
-      fs.unlink(rawPath, () => {});
+      console.error('Thumbnail processing failed:', e.message);
+      try { fs.unlinkSync(rawPath); } catch {}
       thumbnailPath = null;
+      // Don't swallow — surface to the modal so the user can see it
+      throw new Error('Thumbnail download failed: ' + e.message);
     }
   }
 

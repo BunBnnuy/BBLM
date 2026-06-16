@@ -1,6 +1,6 @@
 {
   "name": "bbs-libman",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "BB's Library Manager for 3D model and game asset downloads",
   "main": "main.js",
   "scripts": {
@@ -18,7 +18,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "cheerio": "^1.2.0",

@@ -81,7 +81,7 @@ class DownloadQueue {
       this.active.status = 'error';
       this.active.error  = err.message;
       this._notify();
-      if (mainWindow) {
+      if (mainWindow && store.get('notificationsEnabled', true)) {
         new Notification({
           title: "BB's LibMan — Download Failed",
           body: `"${this.active.fileName}": ${err.message}`,
@@ -188,12 +188,14 @@ class DownloadQueue {
       mainWindow.setTitle(`BB's LibMan`);
     }
 
-    new Notification({
-      title: "BB's LibMan — Asset Ready",
-      body: `"${shell.meta.name}" has been added to your library.`,
-      icon: ICON,
-      silent: false,
-    }).show();
+    if (store.get('notificationsEnabled', true)) {
+      new Notification({
+        title: "BB's LibMan — Asset Ready",
+        body: `"${shell.meta.name}" has been added to your library.`,
+        icon: ICON,
+        silent: false,
+      }).show();
+    }
   }
 }
 
@@ -462,24 +464,31 @@ function createModalWindow(importData) {
 function onFileDetected(filePath) {
   const fileName = path.basename(filePath);
 
-  // Open the modal immediately
-  createModalWindow({ originUrl: '', fileName, filePath });
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
+  if (modalWindow && !modalWindow.isDestroyed()) {
+    // Modal already open — push the new file into it
+    modalWindow.webContents.send('modal-file-detected', { filePath, fileName });
+    modalWindow.restore();
+    modalWindow.focus();
+  } else {
+    createModalWindow({ originUrl: '', fileName, filePath });
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
   }
 
-  // Also fire a system notification so the user notices if the window is behind
-  const notif = new Notification({
-    title: "BB's LibMan — New Asset Downloaded",
-    body: `"${fileName}" is ready to import.`,
-    icon: ICON,
-    silent: false,
-  });
-  notif.on('click', () => {
-    if (modalWindow) { modalWindow.restore(); modalWindow.focus(); }
-  });
-  notif.show();
+  if (store.get('notificationsEnabled', true)) {
+    const notif = new Notification({
+      title: "BB's LibMan — New Asset Downloaded",
+      body: `"${fileName}" is ready to import.`,
+      icon: ICON,
+      silent: false,
+    });
+    notif.on('click', () => {
+      if (modalWindow) { modalWindow.restore(); modalWindow.focus(); }
+    });
+    notif.show();
+  }
 }
 
 // ── IPC handlers ──────────────────────────────────────────────────────────────
@@ -489,6 +498,7 @@ ipcMain.handle('get-config', () => ({
   watchedDomains: store.get('watchedDomains', []),
   downloadsFolder: store.get('downloadsFolder', app.getPath('downloads')),
   monitorEnabled: store.get('monitorEnabled', false),
+  notificationsEnabled: store.get('notificationsEnabled', true),
   boothEnabled: store.get('boothEnabled', false),
   boothDownloadsFolder: store.get('boothDownloadsFolder', ''),
 }));
@@ -569,6 +579,7 @@ ipcMain.handle('set-config', (event, config) => {
   if (config.watchedDomains !== undefined) store.set('watchedDomains', config.watchedDomains);
   if (config.downloadsFolder !== undefined) store.set('downloadsFolder', config.downloadsFolder);
   if (config.monitorEnabled !== undefined) store.set('monitorEnabled', config.monitorEnabled);
+  if (config.notificationsEnabled !== undefined) store.set('notificationsEnabled', config.notificationsEnabled);
   if (config.boothEnabled !== undefined) store.set('boothEnabled', config.boothEnabled);
   if (config.boothDownloadsFolder !== undefined) store.set('boothDownloadsFolder', config.boothDownloadsFolder);
   return true;
@@ -732,10 +743,30 @@ ipcMain.handle('add-file-to-asset', (event, { assetId, filePath }) => {
   return { assetId, fileName };
 });
 
-ipcMain.handle('open-import-modal', (event, filePath) => {
-  console.log('[open-import-modal] called with:', filePath);
-  const fileName = path.basename(filePath);
-  createModalWindow({ originUrl: '', fileName, filePath });
+ipcMain.handle('open-import-modal', (event, arg) => {
+  // arg can be a string (single file) or { filePaths: string[] } (multiple files)
+  let filePaths;
+  if (typeof arg === 'string') {
+    filePaths = [arg];
+  } else if (arg && Array.isArray(arg.filePaths)) {
+    filePaths = arg.filePaths;
+  } else {
+    return;
+  }
+  console.log('[open-import-modal] called with:', filePaths);
+  const fileName = path.basename(filePaths[0]);
+  createModalWindow({ originUrl: '', fileName, filePath: filePaths[0], filePaths });
+});
+
+ipcMain.handle('pick-files', async () => {
+  const result = await dialog.showOpenDialog(modalWindow || mainWindow || BrowserWindow.getFocusedWindow(), {
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Archive & Package Files', extensions: ['zip', 'rar', '7z', 'unitypackage', 'tar', 'gz'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  return result.canceled ? null : result.filePaths;
 });
 
 ipcMain.handle('scrape-images', async (event, originUrl) => {
@@ -880,11 +911,13 @@ ipcMain.handle('get-library-item-ids', () => {
 });
 
 ipcMain.handle('get-free-items-config', () => ({
+  enabled: store.get('freeItemsEnabled', true),
   interval: store.get('freeItemsInterval', 6),
   maxPages: store.get('freeItemsMaxPages', 5),
 }));
 
 ipcMain.handle('set-free-items-config', (event, config) => {
+  if (config.enabled !== undefined) store.set('freeItemsEnabled', config.enabled);
   if (config.interval !== undefined) store.set('freeItemsInterval', config.interval);
   if (config.maxPages !== undefined) store.set('freeItemsMaxPages', config.maxPages);
   scheduleFreeItemsInterval();
@@ -966,8 +999,183 @@ async function runFreeItemsScan() {
   }
 }
 
+// ── Library Scanner ───────────────────────────────────────────────────────────
+
+let scannerCancelled = false;
+
+function find7zip() {
+  const candidates = [
+    'C:\\Program Files\\7-Zip\\7z.exe',
+    'C:\\Program Files (x86)\\7-Zip\\7z.exe',
+  ];
+  for (const p of candidates) {
+    try { fs.accessSync(p); return p; } catch {}
+  }
+  const { spawnSync } = require('child_process');
+  try {
+    const r = spawnSync('7z', ['i'], { encoding: 'utf8', timeout: 3000 });
+    if (!r.error) return '7z';
+  } catch {}
+  return null;
+}
+
+ipcMain.handle('scanner-get-results',   () => store.get('scannerResults', []));
+ipcMain.handle('scanner-save-results',  (event, results) => { store.set('scannerResults', results); return true; });
+ipcMain.handle('scanner-clear-results', () => { store.set('scannerResults', []); return true; });
+
+ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl }) => {
+  const { scrapePageMeta } = require('./src/scraper');
+  const { importAsset } = require('./src/assetManager');
+
+  let assetName = path.basename(archivePath, path.extname(archivePath)).replace(/[-_]+/g, ' ').trim();
+  let tags = [];
+  let selectedImageUrl = null;
+
+  if (originUrl) {
+    try {
+      const scraped = await scrapePageMeta(originUrl);
+      if (scraped.name)           assetName        = scraped.name;
+      if (scraped.tags?.length)   tags             = scraped.tags;
+      if (scraped.images?.length) selectedImageUrl = scraped.images[0].url;
+    } catch (err) {
+      console.warn('[scanner-import] scrape failed:', err.message);
+    }
+  }
+
+  try {
+    const result = await importAsset({ originUrl, filePath: archivePath, selectedImageUrl, assetName, tags, store });
+    if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: result.assetId });
+    return { ok: true, assetId: result.assetId, assetName: result.meta.name };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('scanner-cancel', () => {
+  scannerCancelled = true;
+  return true;
+});
+
+ipcMain.handle('scanner-scan', async (event, folderPath) => {
+  scannerCancelled = false;
+  const { spawnSync } = require('child_process');
+  const os = require('os');
+
+  const send = (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('scanner-progress', data);
+    }
+  };
+
+  const sevenZip = find7zip();
+  if (!sevenZip) {
+    send({ type: 'error', message: '7-Zip not found. Please install 7-Zip from https://www.7-zip.org/' });
+    return { ok: false };
+  }
+
+  const COMPRESSED_EXTS = new Set([
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz',
+    '.unitypackage', '.nupkg', '.jar', '.whl', '.egg',
+  ]);
+
+  // Collect top-level archive files from the selected folder
+  function walkFolder(dir, results = []) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return results; }
+    for (const e of entries) {
+      if (scannerCancelled) break;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walkFolder(full, results);
+      } else {
+        const ext = path.extname(e.name).toLowerCase();
+        if (COMPRESSED_EXTS.has(ext)) results.push(full);
+      }
+    }
+    return results;
+  }
+
+  // Extract archive to a temp dir, walk contents for the first "pathname" file.
+  // Returns true if a pathname was found (signals caller to stop searching).
+  // rootArchive is always the original top-level file for display purposes.
+  function processArchive(archivePath, rootArchive, counter) {
+    if (scannerCancelled) return false;
+
+    const tempDir = path.join(os.tmpdir(), `bblm-scan-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      const r = spawnSync(sevenZip, ['x', archivePath, `-o${tempDir}`, '-y'], {
+        maxBuffer: 200 * 1024 * 1024,
+        timeout: 120000,
+      });
+      if (r.error) throw r.error;
+
+      return walkExtracted(tempDir, rootArchive, counter);
+    } catch (err) {
+      send({ type: 'archive_error', archive: rootArchive, message: err.message });
+      return false;
+    } finally {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  // Walk an extracted directory. Stops as soon as the first "pathname" is found.
+  // Returns true if found, false otherwise.
+  function walkExtracted(dir, rootArchive, counter) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+    for (const e of entries) {
+      if (scannerCancelled) return false;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (walkExtracted(full, rootArchive, counter)) return true;
+      } else if (e.name === 'pathname') {
+        try {
+          const content = fs.readFileSync(full, 'utf8').trim();
+          if (content) {
+            counter.found++;
+            send({ type: 'result', archive: rootArchive, content });
+            return true; // first pathname found — stop
+          }
+        } catch {}
+      } else {
+        const ext = path.extname(e.name).toLowerCase();
+        if (COMPRESSED_EXTS.has(ext)) {
+          if (processArchive(full, rootArchive, counter)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  send({ type: 'walking' });
+  const archives = walkFolder(folderPath);
+  if (scannerCancelled) { send({ type: 'cancelled' }); return { ok: false }; }
+
+  send({ type: 'found_archives', count: archives.length });
+
+  const counter = { found: 0 };
+
+  for (let i = 0; i < archives.length; i++) {
+    if (scannerCancelled) break;
+    const archivePath = archives[i];
+    send({ type: 'scanning', current: archivePath, index: i + 1, total: archives.length });
+    processArchive(archivePath, archivePath, counter);
+  }
+
+  if (scannerCancelled) {
+    send({ type: 'cancelled' });
+  } else {
+    send({ type: 'done', total: archives.length, found: counter.found });
+  }
+
+  return { ok: true };
+});
+
 function scheduleFreeItemsInterval() {
   if (freeItemsTimer) { clearTimeout(freeItemsTimer); freeItemsTimer = null; }
+  if (!store.get('freeItemsEnabled', true)) return;
   const hours = store.get('freeItemsInterval', 6);
   if (!hours || hours <= 0) return;
   freeItemsTimer = setTimeout(async () => {

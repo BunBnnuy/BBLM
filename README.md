@@ -52,9 +52,20 @@ A dedicated tab that automatically scans Booth.pm for ¥0 VRChat items:
 - **Paginated list** — thumbnail, name, and price shown in a clean 20-item paginated list; click any row to open the item on Booth
 - **One-click download** — the Download button triggers the full download flow internally (no browser tab opens); a Booth login window appears automatically the first time if needed, and the session is remembered for all future downloads
 - **"In Library" detection** — if an item is already in your BBLM library the button is automatically grayed out with "✔ In Library" text, updating live as downloads complete
+- **Enable / disable toggle** — turn the entire Free Items feature on or off without losing your settings
 - **Auto-scan** — configure an interval (1–24 hours) to scan automatically in the background, or trigger a manual scan at any time
 - **Configurable depth** — set how many listing pages to scan (default 5, max 20)
 - **Polite scraping** — 3–5 second random delay between item page requests to avoid overloading Booth's servers
+
+### 🔍 Library Scanner
+A utility tab for discovering assets already on your disk that haven't been imported yet:
+
+- **Folder scan** — pick any folder and scan it recursively for archives and Unity packages
+- **Paginated results** — found files listed 10 at a time with archive name, contained files, and full path
+- **One-click import** — import any discovered file directly into BBLM without leaving the tab
+- **Copy All** — copy the full list of found paths to the clipboard in one click
+- **Progress bar** — real-time scan progress shown while scanning large folder trees
+- **Cancellable** — stop a long scan at any time
 
 ### 🔗 URL Protocol Handlers
 Register BB's LibMan as the default handler for custom URL schemes, enabling fully automatic one-click importing from external apps:
@@ -74,11 +85,15 @@ When a supported link is triggered, BB's LibMan:
 Multiple links triggered in quick succession are handled by a **download queue** — one download runs at a time, with a footer indicator showing the active download progress and how many items are waiting.
 
 ### ✏️ Asset Management
+- **+ Add Asset button** — quick-access button in the toolbar to open the import dialog without drag-drop
 - **Single click** — opens the Edit dialog to update name, origin URL, tags, or thumbnail
 - **Double click** — opens the asset folder in Explorer
 - **Right-click** — context menu with Edit, Hide, and Delete options
 - **Hide** — remove an asset from the library view without deleting it; restore it from Settings → Hidden Assets
 - **Delete** — permanently delete an asset and all its files
+
+### 🔔 Notifications
+- Desktop notifications for completed and failed downloads, toggleable in Settings
 
 ### 🖥 System Tray
 - Minimizing or closing the window sends the app to the system tray
@@ -192,6 +207,7 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 ├── renderer/
 │   ├── index.html / app.js          # Main library view + pagination + tag filter
 │   ├── freeItems.js                 # Booth Free Items tab logic
+│   ├── scanner.js                   # Library Scanner tab logic
 │   ├── modal.html / modal.js        # Import / edit dialog with tag editor
 │   ├── settings.html / settings.js  # Settings page
 │   └── styles.css

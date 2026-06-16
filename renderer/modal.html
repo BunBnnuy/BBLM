@@ -2,12 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https: http:; style-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https: http:; style-src 'self' 'unsafe-inline';" />
   <title>Import Asset – BB's LibMan</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="modal-body">
+    <div id="new-files-banner" class="new-files-banner" style="display:none;">
+      <span>📥 New files were downloaded and added to the list.</span>
+      <button class="new-files-banner-close" id="btn-dismiss-banner" title="Dismiss">×</button>
+    </div>
+
+    <div id="asset-suggestions" class="new-files-banner-suggestions" style="display:none;">
+      <span class="suggestions-label">Add to existing collection:</span>
+      <div class="suggestions-strip" id="suggestions-strip"></div>
+    </div>
     <div class="modal-title" id="modal-title">Import Asset</div>
 
     <div class="field">
@@ -25,7 +34,11 @@
 
     <div class="field" id="file-field">
       <label>File to Import</label>
-      <input type="text" id="file-name" placeholder="filename.zip" readonly />
+      <div class="field-row">
+        <input type="text" id="file-name" placeholder="filename.zip" readonly />
+        <button class="btn-secondary" id="btn-browse">Browse…</button>
+      </div>
+      <div id="file-list" class="file-list" style="display:none;"></div>
     </div>
 
     <div id="status" class="status"></div>

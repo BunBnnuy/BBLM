@@ -3,6 +3,7 @@ const emptyState = document.getElementById('empty-state');
 const searchInput = document.getElementById('search');
 const btnSort = document.getElementById('btn-sort');
 const btnView = document.getElementById('btn-view');
+const btnAddAsset = document.getElementById('btn-add-asset');
 const assetCount = document.getElementById('asset-count');
 
 // ── Pagination state ─────────────────────────────────────────────────────────
@@ -210,6 +211,13 @@ btnSort.addEventListener('click', () => {
   localStorage.setItem('sortMode', sortMode);
   updateSortButton();
   loadLibrary(searchInput.value);
+});
+
+btnAddAsset.addEventListener('click', () => {
+  window.api.pickFiles().then(paths => {
+    if (!paths || paths.length === 0) return;
+    window.api.openImportModal(paths.length === 1 ? paths[0] : { filePaths: paths });
+  });
 });
 
 // ── Drag & drop — two-zone system ────────────────────────────────────────────

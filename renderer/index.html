@@ -13,6 +13,7 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="library">BBLM Library</button>
       <button class="tab-btn" data-tab="free-items">Booth Free Items</button>
+      <button class="tab-btn" data-tab="scanner">Library Scanner</button>
     </div>
     <div class="search-wrap" id="library-search-wrap">
       <input type="search" id="search" placeholder="Search assets…" />
@@ -26,6 +27,7 @@
     <span id="asset-count" class="asset-count library-only" title=""></span>
     <button class="btn-ghost library-only" id="btn-sort" title="Sort order">⇅ Date</button>
     <button class="btn-ghost library-only" id="btn-view" title="View mode">⊞ Grid</button>
+    <button class="btn-primary library-only" id="btn-add-asset" title="Import a new asset">+ Add Asset</button>
     <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
   </div>
 
@@ -70,8 +72,12 @@
         <span id="fi-status" class="fi-status">Ready</span>
       </div>
       <div class="fi-actions">
-        <button class="btn-ghost" id="fi-btn-settings">⚙ Settings</button>
-        <button class="btn-primary" id="fi-btn-scan">▶ Scan Now</button>
+        <label class="fi-toggle-wrap" title="Enable or disable Booth Free Items scanning">
+          <span class="fi-toggle-label">Enabled</span>
+          <button id="fi-toggle" class="btn-ghost fi-toggle-btn" role="switch" aria-checked="true">On</button>
+        </label>
+        <button class="btn-ghost fi-enabled-only" id="fi-btn-settings">⚙ Settings</button>
+        <button class="btn-primary fi-enabled-only" id="fi-btn-scan">▶ Scan Now</button>
       </div>
     </div>
 
@@ -116,6 +122,44 @@
     </div>
   </div>
 
+  <!-- Library Scanner tab -->
+  <div id="tab-scanner" class="tab-panel" style="display:none;">
+    <div class="sc-header">
+      <div class="sc-folder-row">
+        <button class="btn-ghost" id="sc-btn-pick">📁 Select Folder</button>
+        <span id="sc-folder-path" class="sc-folder-path">No folder selected</span>
+      </div>
+      <div class="sc-actions">
+        <span id="sc-status" class="sc-status"></span>
+        <button class="btn-primary" id="sc-btn-scan" disabled>▶ Scan</button>
+        <button class="btn-ghost" id="sc-btn-cancel" style="display:none;">✕ Cancel</button>
+      </div>
+    </div>
+    <div id="sc-progress-bar-wrap" class="sc-progress-bar-wrap" style="display:none;">
+      <div class="sc-bar-track"><div id="sc-bar" class="sc-bar"></div></div>
+      <span id="sc-bar-label" class="sc-bar-label"></span>
+    </div>
+    <div id="sc-empty" class="sc-empty">Select a folder and click Scan to search for Unity packages and compressed archives.</div>
+    <div id="sc-results" class="sc-results" style="display:none;">
+      <div class="sc-results-header">
+        <span id="sc-results-count" class="sc-results-count"></span>
+        <button class="btn-ghost" id="sc-btn-copy-all" style="font-size:11px;padding:3px 10px;">⎘ Copy All</button>
+        <button class="btn-ghost" id="sc-btn-clear" style="font-size:11px;padding:3px 10px;">✕ Clear</button>
+      </div>
+      <div id="sc-results-list" class="sc-results-list"></div>
+      <div id="sc-pagination-bar" class="fi-pagination-bar" style="display:none;">
+        <div class="pagination-info" id="sc-pag-info"></div>
+        <div class="pagination-controls">
+          <button class="btn-ghost pag-btn" id="sc-btn-first">«</button>
+          <button class="btn-ghost pag-btn" id="sc-btn-prev">‹</button>
+          <div class="pag-pages" id="sc-pag-pages"></div>
+          <button class="btn-ghost pag-btn" id="sc-btn-next">›</button>
+          <button class="btn-ghost pag-btn" id="sc-btn-last">»</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <footer class="app-footer">
     <div class="footer-progress-area">
       <div id="dl-progress" style="display:none;">
@@ -150,5 +194,6 @@
 
   <script src="app.js"></script>
   <script src="freeItems.js"></script>
+  <script src="scanner.js"></script>
 </body>
 </html>

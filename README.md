@@ -234,6 +234,10 @@ Each imported asset gets its own folder inside the root folder:
 
 ---
 
+## License
+
+MIT © 2026 BunBnnuy — see [LICENSE](LICENSE) for full text.
+
 ## Open Source
 
 BB's LibMan is built on:

@@ -39,9 +39,10 @@
 
 ### 🛍 Booth Library Manager Integration
 - Connect your local [Booth Library Manager](https://booth.pm) database to display all your Booth purchases alongside your own imported assets
-- Booth items show their original thumbnails with a Booth badge overlay
+- Booth items show their original thumbnails with a Booth badge overlay in the bottom-left corner
 - Booth item tags are read directly from the BLM database (`booth_item_tag_relations`)
 - Clicking a Booth item opens its local download folder (if configured)
+- Hover any card to reveal a **↗ open origin link** button in the bottom-right corner, opening the item's original listing in your browser
 - Hide individual Booth items independently of your local library
 
 ### 🆓 Booth Free Items

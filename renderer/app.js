@@ -492,6 +492,10 @@ async function loadLibrary(filter = '') {
       ? '<img class="booth-badge" src="../assets/booth.png" alt="Booth" />'
       : '';
 
+    const originLinkHtml = asset.originUrl
+      ? `<button class="card-origin-link" title="Open original listing" aria-label="Open original listing">↗</button>`
+      : '';
+
     const isPending = asset.downloadStatus === 'pending';
     const initPercent = (asset.id && pendingDownloads[asset.id]) || 0;
     const pendingOverlay = isPending
@@ -518,6 +522,7 @@ async function loadLibrary(filter = '') {
       <div class="asset-thumb-wrap">
         ${thumbHtml}
         ${boothBadge}
+        ${originLinkHtml}
         ${pendingOverlay}
       </div>
       <div class="asset-info">
@@ -553,6 +558,16 @@ async function loadLibrary(filter = '') {
     });
 
     if (!asset.localFolder && asset.source === 'booth') card.style.cursor = 'default';
+
+    // ── Origin link: open the item's source URL ──
+    const originLinkEl = card.querySelector('.card-origin-link');
+    if (originLinkEl) {
+      originLinkEl.addEventListener('click', e => {
+        e.stopPropagation();
+        window.api.openExternal(asset.originUrl);
+      });
+      originLinkEl.addEventListener('dblclick', e => e.stopPropagation());
+    }
 
     // ── Tag pill clicks: filter by tag ──
     card.querySelectorAll('.tag-pill--card').forEach(pill => {

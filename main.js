@@ -430,10 +430,11 @@ function createMainWindow() {
 }
 
 function createModalWindow(importData) {
-  if (modalWindow) {
+  if (modalWindow && !modalWindow.isDestroyed()) {
     modalWindow.focus();
     return;
   }
+  modalWindow = null;
 
   modalWindow = new BrowserWindow({
     width: 720,
@@ -451,12 +452,16 @@ function createModalWindow(importData) {
     show: false,
   });
 
-  modalWindow.loadFile('renderer/modal.html');
+  modalWindow.loadFile('renderer/modal.html').catch(() => {
+    if (modalWindow && !modalWindow.isDestroyed()) modalWindow.destroy();
+    modalWindow = null;
+  });
   modalWindow.once('ready-to-show', () => {
     modalWindow.show();
     modalWindow.webContents.send('import-data', importData);
   });
   modalWindow.on('closed', () => { modalWindow = null; });
+  modalWindow.webContents.on('render-process-gone', () => { modalWindow = null; });
 }
 
 // ── Downloads monitor callback ────────────────────────────────────────────────

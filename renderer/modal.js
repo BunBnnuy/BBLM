@@ -123,9 +123,8 @@ function setFiles(paths) {
     fileInput.style.display = 'none';
     fileListEl.style.display = 'block';
     renderFileList();
-    nameField.style.display = 'none';
-    imageSection.style.display = 'none';
-    setStatus(`${resolvedFilePaths.length} files selected — each will be imported as a separate asset.`, 'info');
+    nameField.style.display = '';
+    setStatus(`${resolvedFilePaths.length} files selected — with an origin URL they become one asset; without one, each is imported separately.`, 'info');
   } else if (resolvedFilePaths.length === 1) {
     fileInput.style.display = 'none';
     fileListEl.style.display = 'block';
@@ -193,8 +192,9 @@ window.api.onImportData((data) => {
 
     if (data.filePaths && data.filePaths.length > 0) {
       setFiles(data.filePaths);
-      // Auto-fetch only for single-file with known origin
-      if (data.filePaths.length === 1 && data.originUrl) {
+      // A known origin means the files belong to one asset — fetch its data
+      // regardless of how many files came in.
+      if (data.originUrl) {
         autoFetch(data.originUrl);
       }
     } else if (data.filePath) {
@@ -313,20 +313,38 @@ btnImport.addEventListener('click', async () => {
         btnImport.disabled = false;
       }
     } else {
-      // Multi-file batch import
+      // Multi-file batch import — files sharing the same origin URL resolve to
+      // the same asset, so only the first creates it (with thumbnail/tags);
+      // the rest must be appended via addFileToAsset instead of re-running
+      // importAsset, which would overwrite meta.json (thumbnail + files list)
+      // on every iteration.
       setStatus(`⏳ Importing 0 / ${resolvedFilePaths.length}…`, 'info');
       let done = 0;
       const errors = [];
+      let sharedAssetId = null;
       for (const fp of resolvedFilePaths) {
         const autoName = fp.replace(/.*[\\/]/, '').replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-        const name = autoName.charAt(0).toUpperCase() + autoName.slice(1);
+        const fileName = autoName.charAt(0).toUpperCase() + autoName.slice(1);
+        // With a shared origin the files form one asset, so use the name from the
+        // form (populated by "Fetch data"); fall back to the filename only when
+        // there's no origin and each file becomes its own asset.
+        const name = originUrl ? (assetName || fileName) : fileName;
         try {
-          const result = await window.api.importAsset({ originUrl: originUrl || '', filePath: fp, selectedImageUrl: null, assetName: name, tags });
-          window.api.refreshLibrary(result.assetId);
+          // Only merge into one asset when there's a real shared origin URL —
+          // an empty origin means each file is its own untitled asset.
+          if (sharedAssetId && originUrl) {
+            const result = await window.api.addFileToAsset(sharedAssetId, fp);
+            if (result && result.error) throw new Error(result.error);
+            window.api.refreshLibrary(sharedAssetId);
+          } else {
+            const result = await window.api.importAsset({ originUrl: originUrl || '', filePath: fp, selectedImageUrl, assetName: name, tags });
+            sharedAssetId = result.assetId;
+            window.api.refreshLibrary(result.assetId);
+          }
           done++;
           setStatus(`⏳ Importing ${done} / ${resolvedFilePaths.length}…`, 'info');
         } catch (err) {
-          errors.push(fp.replace(/.*[\\/]/, '') + ': ' + err.message);
+          errors.push(fileName + ': ' + err.message);
         }
       }
       if (errors.length === 0) {

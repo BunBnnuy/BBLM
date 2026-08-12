@@ -231,11 +231,14 @@ let existHoverTimer  = null;   // 500ms timer
 let existTimerRAF    = null;   // animation frame for conic fill
 let existTimerStart  = null;
 let addToExistMode   = false;  // true after 500ms hover on right box
+let existModeTimeout = null;   // failsafe: auto-close overlay if drag is cancelled outside the window
 const EXIST_DELAY    = 500;
+const EXIST_MODE_TIMEOUT = 10000;
 
 function resetDragState() {
   dragCounter = 0;
   addToExistMode = false;
+  if (existModeTimeout) { clearTimeout(existModeTimeout); existModeTimeout = null; }
   clearExistTimer();
   dropOverlay.classList.remove('visible', 'fade-back');
   dropZoneNew.classList.remove('hover');
@@ -276,6 +279,12 @@ function startExistTimer() {
     dropOverlay.classList.add('fade-back');
     document.querySelectorAll('.asset-card[data-asset-id]')
       .forEach(c => c.classList.add('drop-target'));
+    // Failsafe: if the drag is cancelled outside the window (no dragleave/drop
+    // fires once addToExistMode is true), don't leave the overlay stuck open.
+    if (existModeTimeout) clearTimeout(existModeTimeout);
+    existModeTimeout = setTimeout(() => {
+      resetDragState();
+    }, EXIST_MODE_TIMEOUT);
   }, EXIST_DELAY);
 }
 
@@ -294,6 +303,8 @@ document.addEventListener('dragleave', e => {
 });
 
 document.addEventListener('dragover', e => e.preventDefault());
+
+window.addEventListener('dragend', () => resetDragState());
 
 document.addEventListener('drop', e => {
   e.preventDefault();

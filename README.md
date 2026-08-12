@@ -34,7 +34,11 @@
 - **Drag & Drop** — drag a file onto the window to choose between two actions:
   - **Add New Asset** (left zone) — opens the import dialog
   - **Add to Existing Asset** (right zone) — hover for 500ms to activate card drop targets, then drop the file directly onto any card to add it to that asset's folder without any dialog
+  - Dragging the file back out of the window cancels the drop and dismisses the overlay
 - **URL Scraping** — paste a Booth URL to automatically fetch the asset name, tags, and thumbnail via the Booth JSON API; other sites use HTML scraping
+- **Multi-file imports** — select or drop several files at once:
+  - With an **origin URL** set, all files are treated as one asset (e.g. an avatar plus its texture packs) and share the fetched name, tags, and thumbnail
+  - With **no origin URL**, each file is imported as its own separate asset, named after its filename
 - Thumbnails are downloaded and transcoded to 500×500 PNG at import time
 
 ### 🛍 Booth Library Manager Integration
@@ -232,6 +236,12 @@ Each imported asset gets its own folder inside the root folder:
     ├── thumbnail.png        # 500×500 PNG thumbnail
     └── meta.json            # Name, origin URL, import date, tags, download status
 ```
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 

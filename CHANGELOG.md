@@ -1,0 +1,79 @@
+# Changelog
+
+All notable changes to BB's LibMan are documented here.
+
+This project adheres to [Semantic Versioning](https://semver.org/).
+
+---
+
+## [1.2.2] — 2026-08-12
+
+Bug-fix release focused on the import pipeline.
+
+### Fixed
+
+- **Multi-file imports lost their fetched metadata.** When importing several files at once, the title and thumbnail retrieved by **Fetch data** were discarded — cards were saved with the raw `.zip` filename as their name and no thumbnail at all. The batch importer was passing the filename as the asset name and hardcoding the thumbnail to empty, so nothing fetched from the page ever reached `meta.json`. Tags were unaffected, which is why partially-correct cards appeared.
+- **Multi-file imports overwrote each other.** Files sharing an origin URL resolve to the same asset folder, but each file re-ran the full import, rewriting `meta.json` every time and clobbering the previous file's metadata and file list. Files sharing an origin are now appended to a single asset instead.
+- **Import dialog sometimes refused to open until the app was restarted.** A closed or crashed dialog could leave behind a stale window reference; every later attempt to open the dialog then silently focused a dead window and did nothing. The reference is now validated before reuse and cleared if the window fails to load or its render process is gone.
+- **Drop overlay could get stuck on screen.** Dragging a file into the window, hovering the *Add to Existing* zone long enough to arm it, then dragging back out left the overlay open indefinitely, since the cancel path was suppressed once that mode engaged. The overlay now clears when the drag ends, with a 10-second failsafe.
+
+### Changed
+
+- **Auto-fetch is no longer limited to single-file imports.** A multi-file import that arrives with a known origin URL now fetches the page data automatically.
+- **The asset name field is visible for multi-file imports.** It was previously hidden, leaving the fetched name invisible and uneditable.
+- Multi-file imports **with** an origin URL now merge into one asset rather than creating one asset per file. Files with no origin URL are still imported separately, as before.
+
+---
+
+## [1.2.1] — 2026-07-12
+
+### Changed
+
+- Moved the Booth source badge from the bottom-right to the bottom-left of the card thumbnail.
+
+### Added
+
+- Hover-only **↗ open origin link** button in the card's bottom-right corner, opening the item's original listing in the browser without leaving the app.
+
+---
+
+## [1.2.0] — 2026-06-16
+
+### Added
+
+- **Library Scanner** tab — scan any folder recursively for archives and Unity packages already on disk, with paginated results, one-click import, Copy All, live progress, and cancellation.
+- Desktop **notifications toggle** in Settings for completed and failed downloads.
+- **Enable / disable toggle** for the Free Items feature, preserving its settings while off.
+
+---
+
+## [1.1.0] — 2026-06-09
+
+### Added
+
+- **Booth Free Items** tab — automatic scanning of Booth.pm for ¥0 VRChat items, including detection of partially-free items via per-variation price checks, price-range display, one-click download with remembered login session, and live "In Library" detection.
+
+---
+
+## [1.0.1] — 2026-06-07
+
+### Added
+
+- Two-zone **drag & drop** (Add New / Add to Existing) with card drop targets.
+- **Download queue** with per-card progress bars and a footer indicator.
+- **Tag system** with Booth JSON API integration and a searchable filter panel.
+- Card **glow animation** on modification.
+- **Pagination** (10 / 30 / 50 items per page).
+
+---
+
+## [1.0.0] — 2026-06-05
+
+Initial release.
+
+[1.2.2]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.2
+[1.2.1]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.1
+[1.2.0]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.0
+[1.1.0]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.1.0
+[1.0.1]: https://github.com/BunBnnuy/BBLM/releases/tag/1.0.1
+[1.0.0]: https://github.com/BunBnnuy/BBLM/releases/tag/1.0.0

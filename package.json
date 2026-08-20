@@ -29,6 +29,10 @@
   "author": "",
   "license": "MIT",
   "type": "commonjs",
+  "overrides": {
+    "fast-uri": "^4.1.2",
+    "undici": "^8.10.0"
+  },
   "dependencies": {
     "cheerio": "^1.2.0",
     "electron-store": "^8.2.0",

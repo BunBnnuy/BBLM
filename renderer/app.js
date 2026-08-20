@@ -488,11 +488,11 @@ async function loadLibrary(filter = '') {
     card.title = asset.originUrl || '';
 
     let thumbHtml;
-    if (asset.thumbnailUrl) {
-      thumbHtml = `<img class="asset-thumb" src="${asset.thumbnailUrl}" alt="${escHtml(asset.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
+    if (safeImageUrl(asset.thumbnailUrl)) {
+      thumbHtml = `<img class="asset-thumb" src="${escHtml(safeImageUrl(asset.thumbnailUrl))}" alt="${escHtml(asset.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
                    <div class="asset-thumb-placeholder" style="display:none">📦</div>`;
-    } else if (asset.thumbnailPath) {
-      thumbHtml = `<img class="asset-thumb" src="file://${asset.thumbnailPath.replace(/\\/g, '/')}" alt="${escHtml(asset.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
+    } else if (safeImageUrl(asset.thumbnailPath, true)) {
+      thumbHtml = `<img class="asset-thumb" src="${escHtml(safeImageUrl(asset.thumbnailPath, true))}" alt="${escHtml(asset.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
                    <div class="asset-thumb-placeholder" style="display:none">📦</div>`;
     } else {
       thumbHtml = `<div class="asset-thumb-placeholder">📦</div>`;
@@ -635,7 +635,13 @@ async function loadLibrary(filter = '') {
 }
 
 function escHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function safeImageUrl(value, local = false) {
+  if (typeof value !== 'string' || value.length > 4096) return '';
+  if (local) return value ? `file://${value.replace(/\\/g, '/')}` : '';
+  try { return new URL(value).protocol === 'https:' ? value : ''; } catch { return ''; }
 }
 
 // ── Per-card asset download progress ─────────────────────────────────────────

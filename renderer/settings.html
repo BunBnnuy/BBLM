@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
   <title>Settings – BB's LibMan</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -39,6 +39,12 @@
           Desktop notifications
         </label>
         <button id="notifications-toggle" class="btn-ghost" role="switch" aria-checked="true" style="min-width:56px;">On</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+        <label class="toggle-label" for="health-notify-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
+          Notify on library health-check changes
+        </label>
+        <button id="health-notify-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
       </div>
     </div>
 

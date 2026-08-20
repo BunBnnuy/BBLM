@@ -1,8 +1,65 @@
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const http = require('http');
 const sharp = require('sharp');
+const { download } = require('./httpClient');
+const { resolveInsideRoot, resolveExistingAssetDir, allocateAssetId, sanitizeExternalFilename } = require('./security/pathPolicy');
+const { writeJsonAtomic } = require('./atomicFs');
+const { scanDiskEntries, readIndexFile, writeIndexFile, fastThumbnailPath } = require('./assetIndex');
+
+// In-memory cache of the current rootFolder's asset index, populated on first
+// getAssets() call and kept in sync via touchIndexEntry/removeIndexEntry.
+let cache = null; // { rootFolder, entries: Map<assetId, meta> }
+
+function materialize(rootFolder, entriesMap) {
+  const assets = [];
+  for (const [assetId, meta] of entriesMap) {
+    const out = { ...meta };
+    if (out.thumbnail) out.thumbnailPath = fastThumbnailPath(rootFolder, assetId, out.thumbnail);
+    assets.push(out);
+  }
+  return assets.sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
+}
+
+function touchIndexEntry(store, assetId, meta) {
+  const rootFolder = store.get('rootFolder', '');
+  if (!cache || cache.rootFolder !== rootFolder) return;
+  cache.entries.set(assetId, meta);
+  try { writeIndexFile(rootFolder, Object.fromEntries(cache.entries)); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
+}
+
+function removeIndexEntry(store, assetId) {
+  const rootFolder = store.get('rootFolder', '');
+  if (!cache || cache.rootFolder !== rootFolder) return;
+  cache.entries.delete(assetId);
+  try { writeIndexFile(rootFolder, Object.fromEntries(cache.entries)); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
+}
+
+function reconcileIndex(store) {
+  const rootFolder = store.get('rootFolder', '');
+  if (!rootFolder || !fs.existsSync(rootFolder)) return null;
+
+  const disk = scanDiskEntries(rootFolder);
+  const before = cache && cache.rootFolder === rootFolder
+    ? cache.entries
+    : new Map(Object.entries(readIndexFile(rootFolder) || {}));
+
+  let added = 0, removed = 0, changed = 0;
+  const diskIds = new Set(Object.keys(disk));
+  for (const id of diskIds) {
+    if (!before.has(id)) added++;
+    else if (JSON.stringify(before.get(id)) !== JSON.stringify(disk[id])) changed++;
+  }
+  for (const id of before.keys()) {
+    if (!diskIds.has(id)) removed++;
+  }
+
+  if (added === 0 && removed === 0 && changed === 0) return null;
+
+  const entries = new Map(Object.entries(disk));
+  cache = { rootFolder, entries };
+  try { writeIndexFile(rootFolder, disk); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
+  return { added, removed, changed };
+}
 
 function extractAssetId(originUrl) {
   try {
@@ -63,41 +120,8 @@ function refererForUrl(url) {
 
 function downloadFile(url, destPath, extraHeaders = {}) {
   url = normalizeUrl(url);
-  return new Promise((resolve, reject) => {
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return reject(new Error('Invalid URL for download: ' + url));
-    }
-    const proto = url.startsWith('https') ? https : http;
-    const file = fs.createWriteStream(destPath);
-    const referer = refererForUrl(url);
-    const options = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        ...(referer ? { Referer: referer } : {}),
-        ...extraHeaders,
-      },
-    };
-    proto.get(url, options, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        file.close();
-        fs.unlink(destPath, () => {});
-        const redirectUrl = normalizeUrl(res.headers.location.startsWith('/')
-          ? new URL(res.headers.location, url).href
-          : res.headers.location);
-        return downloadFile(redirectUrl, destPath, extraHeaders).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        file.close();
-        fs.unlink(destPath, () => {});
-        return reject(new Error('HTTP ' + res.statusCode + ' downloading ' + url));
-      }
-      res.pipe(file);
-      file.on('finish', () => file.close(resolve));
-    }).on('error', (err) => {
-      fs.unlink(destPath, () => {});
-      reject(err);
-    });
-  });
+  const referer = refererForUrl(url);
+  return download(url, destPath, { headers: { 'User-Agent': 'Mozilla/5.0', ...(referer ? { Referer: referer } : {}), ...extraHeaders }, maxBytes: 20 * 1024 * 1024 });
 }
 
 function registerTags(tags, store) {
@@ -112,23 +136,16 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, t
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
 
-  const assetId = extractAssetId(originUrl);
-  const assetDir = path.join(rootFolder, assetId);
+  const assetId = allocateAssetId(rootFolder, extractAssetId(originUrl));
+  const assetDir = resolveInsideRoot(rootFolder, assetId);
 
   if (!fs.existsSync(assetDir)) fs.mkdirSync(assetDir, { recursive: true });
 
-  // Move downloaded file into asset folder (copy+delete for cross-drive transfers)
-  const destFile = path.join(assetDir, path.basename(filePath));
-  try {
-    fs.renameSync(filePath, destFile);
-  } catch (err) {
-    if (err.code === 'EXDEV') {
-      fs.copyFileSync(filePath, destFile);
-      fs.unlinkSync(filePath);
-    } else {
-      throw err;
-    }
-  }
+  // Copy first. Remove the source only after thumbnail and metadata commit.
+  const destFile = path.join(assetDir, sanitizeExternalFilename(path.basename(filePath)));
+  const sameFile = path.resolve(filePath) === path.resolve(destFile);
+  let copied = false;
+  if (!sameFile) { fs.copyFileSync(filePath, destFile, fs.constants.COPYFILE_EXCL); copied = true; }
 
   // Download and transcode thumbnail to 500×500 PNG
   let thumbnailPath = null;
@@ -145,6 +162,7 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, t
     } catch (e) {
       console.error('Thumbnail processing failed:', e.message);
       try { fs.unlinkSync(rawPath); } catch {}
+      if (copied) { try { fs.unlinkSync(destFile); } catch {} }
       thumbnailPath = null;
       // Don't swallow — surface to the modal so the user can see it
       throw new Error('Thumbnail download failed: ' + e.message);
@@ -164,7 +182,14 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, t
     importedAt: new Date().toISOString(),
     tags: tags || [],
   };
-  fs.writeFileSync(path.join(assetDir, 'meta.json'), JSON.stringify(meta, null, 2));
+  try {
+    writeJsonAtomic(path.join(assetDir, 'meta.json'), meta);
+    if (copied) fs.unlinkSync(filePath);
+  } catch (error) {
+    if (copied) { try { fs.unlinkSync(destFile); } catch {} }
+    throw error;
+  }
+  touchIndexEntry(store, assetId, meta);
 
   return { assetId, assetDir, meta };
 }
@@ -173,28 +198,26 @@ function getAssets(store) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder || !fs.existsSync(rootFolder)) return [];
 
-  const assets = [];
-  for (const entry of fs.readdirSync(rootFolder, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const metaPath = path.join(rootFolder, entry.name, 'meta.json');
-    if (!fs.existsSync(metaPath)) continue;
-    try {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      const assetDir = path.join(rootFolder, entry.name);
-      if (meta.thumbnail) {
-        meta.thumbnailPath = path.join(assetDir, meta.thumbnail);
-      }
-      assets.push(meta);
-    } catch {
-      // skip malformed entries
-    }
+  // Fast path: already cached for this rootFolder this session.
+  if (cache && cache.rootFolder === rootFolder) return materialize(rootFolder, cache.entries);
+
+  // Try the on-disk index before falling back to a full scan.
+  const indexEntries = readIndexFile(rootFolder);
+  if (indexEntries) {
+    cache = { rootFolder, entries: new Map(Object.entries(indexEntries)) };
+    return materialize(rootFolder, cache.entries);
   }
-  return assets.sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
+
+  // No usable index yet — full scan, same as before this feature existed.
+  const disk = scanDiskEntries(rootFolder);
+  cache = { rootFolder, entries: new Map(Object.entries(disk)) };
+  try { writeIndexFile(rootFolder, disk); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
+  return materialize(rootFolder, cache.entries);
 }
 
 async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, store }) {
   const rootFolder = store.get('rootFolder', '');
-  const assetDir = path.join(rootFolder, assetId);
+  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
   const metaPath = path.join(assetDir, 'meta.json');
   if (!fs.existsSync(metaPath)) throw new Error('Asset not found: ' + assetId);
 
@@ -223,16 +246,18 @@ async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, s
     }
   }
 
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  writeJsonAtomic(metaPath, meta);
+  touchIndexEntry(store, assetId, meta);
   return { assetId, meta };
 }
 
 function deleteAsset({ assetId, store }) {
   const rootFolder = store.get('rootFolder', '');
-  const assetDir = path.join(rootFolder, assetId);
+  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
   if (fs.existsSync(assetDir)) {
     fs.rmSync(assetDir, { recursive: true, force: true });
   }
+  removeIndexEntry(store, assetId);
   return { assetId };
 }
 
@@ -241,8 +266,8 @@ async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, 
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
 
-  const assetId  = extractAssetId(originUrl);
-  const assetDir = path.join(rootFolder, assetId);
+  const assetId  = allocateAssetId(rootFolder, extractAssetId(originUrl));
+  const assetDir = resolveInsideRoot(rootFolder, assetId);
   if (!fs.existsSync(assetDir)) fs.mkdirSync(assetDir, { recursive: true });
 
   if (tags && tags.length) registerTags(tags, store);
@@ -276,31 +301,36 @@ async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, 
     tags: tags || [],
     downloadStatus: 'pending',
   };
-  fs.writeFileSync(path.join(assetDir, 'meta.json'), JSON.stringify(meta, null, 2));
+  writeJsonAtomic(path.join(assetDir, 'meta.json'), meta);
+  touchIndexEntry(store, assetId, meta);
   return { assetId, assetDir, meta };
 }
 
 function finalizeAssetDownload({ assetId, filePath, store }) {
   const rootFolder = store.get('rootFolder', '');
-  const assetDir   = path.join(rootFolder, assetId);
+  const assetDir   = resolveExistingAssetDir(rootFolder, assetId);
   const metaPath   = path.join(assetDir, 'meta.json');
   if (!fs.existsSync(metaPath)) throw new Error('Asset not found: ' + assetId);
 
-  const destFile = path.join(assetDir, path.basename(filePath));
-  try {
-    fs.renameSync(filePath, destFile);
-  } catch (err) {
-    if (err.code === 'EXDEV') {
-      fs.copyFileSync(filePath, destFile);
-      fs.unlinkSync(filePath);
-    } else throw err;
-  }
+  const destFile = path.join(assetDir, sanitizeExternalFilename(path.basename(filePath)));
+  const sameFile = path.resolve(filePath) === path.resolve(destFile);
+  if (!sameFile) fs.copyFileSync(filePath, destFile, fs.constants.COPYFILE_EXCL);
 
   const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   meta.files = [path.basename(destFile)];
   meta.downloadStatus = 'complete';
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  try {
+    writeJsonAtomic(metaPath, meta);
+    if (!sameFile) fs.unlinkSync(filePath);
+  } catch (error) {
+    if (!sameFile) { try { fs.unlinkSync(destFile); } catch {} }
+    throw error;
+  }
+  touchIndexEntry(store, assetId, meta);
   return { assetId, meta };
 }
 
-module.exports = { importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile, registerTags, createAssetShell, finalizeAssetDownload };
+module.exports = {
+  importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile, registerTags,
+  createAssetShell, finalizeAssetDownload, touchIndexEntry, reconcileIndex,
+};

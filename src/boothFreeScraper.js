@@ -1,6 +1,5 @@
-const https = require('https');
-const http = require('http');
 const { URL } = require('url');
+const { fetchHtml: secureFetchHtml } = require('./httpClient');
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -9,26 +8,7 @@ const HEADERS = {
 };
 
 function fetchHtml(targetUrl, redirectCount = 0) {
-  if (redirectCount > 8) return Promise.reject(new Error('Too many redirects'));
-  return new Promise((resolve, reject) => {
-    const proto = targetUrl.startsWith('https') ? https : http;
-    proto.get(targetUrl, { headers: HEADERS }, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        const redirectUrl = new URL(res.headers.location, targetUrl).href;
-        return fetchHtml(redirectUrl, redirectCount + 1).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode} for ${targetUrl}`));
-      }
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', c => { body += c; });
-      res.on('end', () => resolve(body));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
+  return secureFetchHtml(targetUrl, { headers: HEADERS, maxBytes: 5 * 1024 * 1024 });
 }
 
 function delay(ms) {

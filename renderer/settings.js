@@ -6,6 +6,7 @@ const boothToggle = document.getElementById('booth-toggle');
 const boothFolderField = document.getElementById('booth-folder-field');
 const boothDownloadsInput = document.getElementById('booth-downloads-folder');
 const notificationsToggle = document.getElementById('notifications-toggle');
+const healthNotifyToggle = document.getElementById('health-notify-toggle');
 const schemeBoothToggle = document.getElementById('scheme-booth-toggle');
 const schemeBunsToggle = document.getElementById('scheme-buns-toggle');
 const schemeVroidToggle = document.getElementById('scheme-vroid-toggle');
@@ -22,6 +23,13 @@ function setNotificationsToggle(enabled) {
   notificationsToggle.setAttribute('aria-checked', String(enabled));
   notificationsToggle.classList.toggle('btn-primary', enabled);
   notificationsToggle.classList.toggle('btn-ghost', !enabled);
+}
+
+function setHealthNotifyToggle(enabled) {
+  healthNotifyToggle.textContent = enabled ? 'On' : 'Off';
+  healthNotifyToggle.setAttribute('aria-checked', String(enabled));
+  healthNotifyToggle.classList.toggle('btn-primary', enabled);
+  healthNotifyToggle.classList.toggle('btn-ghost', !enabled);
 }
 
 function setSchemeToggle(btn, enabled) {
@@ -42,6 +50,11 @@ function setBoothToggleState(enabled) {
 notificationsToggle.addEventListener('click', () => {
   const next = notificationsToggle.getAttribute('aria-checked') !== 'true';
   setNotificationsToggle(next);
+});
+
+healthNotifyToggle.addEventListener('click', () => {
+  const next = healthNotifyToggle.getAttribute('aria-checked') !== 'true';
+  setHealthNotifyToggle(next);
 });
 
 monitorToggle.addEventListener('click', async () => {
@@ -97,12 +110,12 @@ async function loadHiddenAssets() {
     row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:6px 8px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);';
 
     const thumbSrc = asset.thumbnailUrl
-      ? asset.thumbnailUrl
+      ? safeImageUrl(asset.thumbnailUrl)
       : asset.thumbnailPath
-        ? 'file://' + asset.thumbnailPath.replace(/\\/g, '/')
+        ? safeImageUrl(asset.thumbnailPath, true)
         : null;
     const thumb = thumbSrc
-      ? `<img src="${thumbSrc}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;flex-shrink:0;" onerror="this.style.display='none'" />`
+      ? `<img src="${escHtml(thumbSrc)}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;flex-shrink:0;" onerror="this.style.display='none'" />`
       : `<div style="width:36px;height:36px;background:var(--surface2);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>`;
     const sourceBadge = asset.source === 'booth'
       ? `<img src="../assets/booth.png" style="width:16px;height:16px;object-fit:contain;flex-shrink:0;" title="Booth" />`
@@ -123,7 +136,13 @@ async function loadHiddenAssets() {
 }
 
 function escHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function safeImageUrl(value, local = false) {
+  if (typeof value !== 'string' || value.length > 4096) return '';
+  if (local) return value ? `file://${value.replace(/\\/g, '/')}` : '';
+  try { return new URL(value).protocol === 'https:' ? value : ''; } catch { return ''; }
 }
 
 async function load() {
@@ -131,6 +150,7 @@ async function load() {
   rootInput.value = config.rootFolder || '';
   downloadsInput.value = config.downloadsFolder || '';
   setNotificationsToggle(config.notificationsEnabled !== false);
+  setHealthNotifyToggle(config.libraryHealthNotify || false);
   setToggleState(config.monitorEnabled || false);
   setBoothToggleState(config.boothEnabled || false);
   boothDownloadsInput.value = config.boothDownloadsFolder || '';
@@ -163,6 +183,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     rootFolder: rootInput.value,
     downloadsFolder: downloadsInput.value,
     notificationsEnabled: notificationsToggle.getAttribute('aria-checked') === 'true',
+    libraryHealthNotify: healthNotifyToggle.getAttribute('aria-checked') === 'true',
     boothEnabled: boothToggle.getAttribute('aria-checked') === 'true',
     boothDownloadsFolder: boothDownloadsInput.value,
   });

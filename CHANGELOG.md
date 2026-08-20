@@ -6,6 +6,29 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.3.0] — 2026-08-20
+
+### Added
+
+- **Automatic updates** — the app now checks GitHub Releases on launch, downloads updates silently in the background, and installs them on the next quit.
+- **Grid / List view toggle** for the Booth Free Items tab, remembered across sessions.
+
+### Fixed
+
+- **Booth Free Items scanning failed with "Invalid IP address: undefined".** The shared HTTPS client's custom DNS resolver didn't handle the calling convention Node uses for Happy Eyeballs (`autoSelectFamily`, on by default since Node 18.13/20), which requests an array of addresses; it received a bare string instead and tried to connect to `undefined`.
+- **Free item downloads were silently rejected.** Real Booth deeplinks include `order_id`, `variation_id`, and `client` query parameters that the strict protocol parser didn't allow, so every genuine download link was dropped before it reached the queue.
+- **Free item downloads could hang for a full minute and then time out.** The hidden Booth sign-in window only queued a download when Booth's page issued an HTTP redirect to the `booth-library-manager://` scheme; a same-page JS navigation to that scheme was ignored entirely.
+
+### Security
+
+- Hardened filesystem, network, protocol-parsing, and Electron/IPC boundaries against path traversal, SSRF/DNS rebinding, malformed protocol input, and unvalidated privileged messages. Asset imports and metadata writes are now transactional (staged, atomic, rollback-on-failure), and archive scanning runs in a sandboxed worker with strict size/time/nesting limits. See `plan.md` for the full scope.
+
+### Changed
+
+- Quieted noisy debug logging (Booth Library Manager DB reads, protocol payload dumps) from the console.
+
+---
+
 ## [1.2.2] — 2026-08-12
 
 Bug-fix release focused on the import pipeline.
@@ -71,6 +94,7 @@ Bug-fix release focused on the import pipeline.
 
 Initial release.
 
+[1.3.0]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.3.0
 [1.2.2]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.2
 [1.2.1]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.1
 [1.2.0]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.0

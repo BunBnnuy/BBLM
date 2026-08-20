@@ -1,3 +1,4 @@
+/* global GM_getValue, GM_notification */
 // ==UserScript==
 // @name         RSLimMan Companion
 // @namespace    https://github.com/rslimman
@@ -89,8 +90,8 @@
 
   // ── Intercept clicks on download/purchase links ──
   function buildProtocolUrl(originUrl, fileName) {
-    const params = new URLSearchParams({ originUrl, file: fileName });
-    return 'rslimman://import?' + params.toString();
+    const params = new URLSearchParams({ origin_url: originUrl, filename: fileName || 'download.zip' });
+    return 'bunslm://import?' + params.toString();
   }
 
   function guessFileName(href) {

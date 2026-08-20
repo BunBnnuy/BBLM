@@ -1200,6 +1200,48 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 
 .fi-row-actions { flex-shrink: 0; }
 
+/* ── Grid view ── */
+.fi-items-list.fi-view-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 12px 20px;
+}
+.fi-items-list.fi-view-grid .fi-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.fi-items-list.fi-view-grid .fi-row:hover { border-color: var(--accent); }
+.fi-items-list.fi-view-grid .fi-row-thumb-wrap {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+.fi-items-list.fi-view-grid .fi-row-info {
+  gap: 4px;
+}
+.fi-items-list.fi-view-grid .fi-row-name {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fi-items-list.fi-view-grid .fi-row-actions {
+  width: 100%;
+}
+.fi-items-list.fi-view-grid .fi-btn-download,
+.fi-items-list.fi-view-grid .fi-btn-in-library {
+  width: 100%;
+  text-align: center;
+}
+
 .fi-btn-download {
   font-size: 11px;
   padding: 5px 12px;

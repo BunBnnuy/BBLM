@@ -1,33 +1,9 @@
-const https = require('https');
-const http = require('http');
 const cheerio = require('cheerio');
 const { URL } = require('url');
+const { fetchHtml: secureFetchHtml } = require('./httpClient');
 
 function fetchHtml(targetUrl) {
-  return new Promise((resolve, reject) => {
-    const proto = targetUrl.startsWith('https') ? https : http;
-    const options = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    };
-
-    proto.get(targetUrl, options, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const redirectUrl = new URL(res.headers.location, targetUrl).href;
-        return fetchHtml(redirectUrl).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error('HTTP ' + res.statusCode + ' for ' + targetUrl));
-      }
-
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => resolve(body));
-    }).on('error', reject);
-  });
+  return secureFetchHtml(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html,application/xhtml+xml' } });
 }
 
 function resolveUrl(src, base) {

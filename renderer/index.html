@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline'; connect-src 'none'; script-src 'self';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: https:; style-src 'self' 'unsafe-inline'; connect-src 'none'; script-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
   <title>BB's LibMan</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -76,6 +76,7 @@
           <span class="fi-toggle-label">Enabled</span>
           <button id="fi-toggle" class="btn-ghost fi-toggle-btn" role="switch" aria-checked="true">On</button>
         </label>
+        <button class="btn-ghost fi-enabled-only" id="fi-btn-view">⊞ Grid</button>
         <button class="btn-ghost fi-enabled-only" id="fi-btn-settings">⚙ Settings</button>
         <button class="btn-primary fi-enabled-only" id="fi-btn-scan">▶ Scan Now</button>
       </div>

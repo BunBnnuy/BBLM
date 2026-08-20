@@ -14,15 +14,29 @@ const fiPagBar        = document.getElementById('fi-pagination-bar');
 const fiPagInfo       = document.getElementById('fi-pag-info');
 const fiPagPages      = document.getElementById('fi-pag-pages');
 const fiToggle        = document.getElementById('fi-toggle');
+const fiBtnView       = document.getElementById('fi-btn-view');
 
 const FI_PAGE_SIZE = 20;
+let fiViewMode = localStorage.getItem('fiViewMode') || 'list'; // 'list' | 'grid'
+
+function applyFiViewMode() {
+  fiList.classList.toggle('fi-view-grid', fiViewMode === 'grid');
+  fiBtnView.textContent = fiViewMode === 'grid' ? '▤ List' : '⊞ Grid';
+}
+
+fiBtnView.addEventListener('click', () => {
+  fiViewMode = fiViewMode === 'grid' ? 'list' : 'grid';
+  localStorage.setItem('fiViewMode', fiViewMode);
+  applyFiViewMode();
+});
+
 let scanning        = false;
 let allItems        = [];   // full list (all found items)
 let fiPage          = 1;
 let libraryItemIds  = new Set();  // booth item IDs already in the BBLM library
 
 function escHtmlFi(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ── Toggle enabled/disabled ──
@@ -194,7 +208,9 @@ function buildRow(item) {
       e.stopPropagation();
       dlBtn.disabled = true;
       dlBtn.textContent = '…';
+      console.log('[free-items] downloading', { itemId: item.itemId, name: item.name, deeplinkUrl: dlBtn.dataset.url });
       const result = await window.api.downloadFreeItem(dlBtn.dataset.url);
+      console.log('[free-items] download result', result);
       if (result && result.ok) {
         dlBtn.textContent = '✔ Queued';
         // Mark as in library so re-render doesn't reset it
@@ -298,5 +314,6 @@ window.api.onDownloadProgress(({ done }) => {
   });
 });
 
+applyFiViewMode();
 loadFiConfig();
 loadFoundFreeItems();

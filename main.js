@@ -2,12 +2,24 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu } =
 process.on('uncaughtException', err => console.error('[CRASH]', err));
 process.on('unhandledRejection', err => console.error('[UNHANDLED REJECTION]', err));
 const path = require('path');
+const { fileURLToPath } = require('url');
 const fs = require('fs');
 const Store = require('electron-store');
+const { autoUpdater } = require('electron-updater');
+const logger = require('./src/logger');
 const { DownloadsMonitor } = require('./src/downloadsMonitor');
+const { parseDownloadProtocol, parseImportIntent } = require('./src/protocol');
+const { resolveExistingAssetDir, resolveAssetFile, sanitizeExternalFilename } = require('./src/security/pathPolicy');
+const { writeJsonAtomic, cleanupStaging } = require('./src/atomicFs');
 
 const store = new Store();
 const monitor = new DownloadsMonitor(onFileDetected);
+
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.on('error', err => logger.warn('autoupdate-error', { message: err.message }));
+autoUpdater.on('update-available', info => logger.info('autoupdate-available', { version: info.version }));
+autoUpdater.on('update-downloaded', info => logger.info('autoupdate-downloaded', { version: info.version }));
 
 console.log('[main] starting, gotTheLock check...');
 const gotTheLock = app.requestSingleInstanceLock();
@@ -18,6 +30,77 @@ let modalWindow = null;
 let tray = null;
 let freeItemsTimer = null;
 let freeItemsScanCancelled = false;
+const pendingImportIntents = new Map();
+
+// IPC is a privileged boundary. Accept messages only from our two known local
+// renderer windows. Remote/auth windows never receive this bridge.
+function ipcSenderRole(event) {
+  const sender = event && event.sender;
+  if (!sender || sender.isDestroyed() || !event.senderFrame || event.senderFrame !== sender.mainFrame) return null;
+  let role = null;
+  if (sender === (mainWindow && mainWindow.webContents)) role = 'main';
+  if (sender === (modalWindow && modalWindow.webContents)) role = 'modal';
+  if (!role) return null;
+  const frameUrl = event.senderFrame && event.senderFrame.url;
+  if (!frameUrl || !frameUrl.startsWith('file://')) return null;
+  try {
+    const localPath = fileURLToPath(frameUrl);
+    const expected = role === 'modal' ? 'modal.html' : null;
+    const basename = path.basename(path.resolve(localPath)).toLowerCase();
+    if (expected && basename !== expected) return null;
+    if (!expected && !['index.html', 'settings.html'].includes(basename)) return null;
+    return role;
+  } catch (_) { return null; }
+}
+
+const MODAL_IPC_CHANNELS = new Set([
+  'get-assets', 'get-all-tags', 'pick-files', 'scrape-images', 'wait-for-file',
+  'import-asset', 'update-asset', 'add-file-to-asset', 'open-import-modal', 'close-modal', 'refresh-library',
+]);
+function isTrustedIpcSender(event, channel) {
+  const role = ipcSenderRole(event);
+  if (!role) return false;
+  if (role === 'modal') return MODAL_IPC_CHANNELS.has(channel);
+  return true;
+}
+
+const _ipcHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => _ipcHandle(channel, (event, ...args) => {
+  if (!isTrustedIpcSender(event, channel)) throw new Error('Unauthorized IPC sender');
+  return listener(event, ...args);
+});
+const _ipcOn = ipcMain.on.bind(ipcMain);
+ipcMain.on = (channel, listener) => _ipcOn(channel, (event, ...args) => {
+  if (!isTrustedIpcSender(event, channel)) return;
+  return listener(event, ...args);
+});
+
+function allowExternalUrl(value) {
+  try {
+    const u = new URL(String(value));
+    return u.protocol === 'https:' && !u.username && !u.password && String(value).length <= 8192 && !/[\x00-\x1f\x7f]/.test(String(value));
+  } catch (_) { return false; }
+}
+
+function allowBoothUrl(value) {
+  try {
+    const u = new URL(String(value));
+    return u.protocol === 'https:' && !u.username && !u.password &&
+      (u.hostname === 'booth.pm' || u.hostname.endsWith('.booth.pm')) &&
+      u.pathname.length < 512;
+  } catch (_) { return false; }
+}
+
+function isAllowedLocalPage(value, allowedNames) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'file:') return false;
+    const localPath = path.resolve(fileURLToPath(parsed));
+    const rendererRoot = path.resolve(__dirname, 'renderer');
+    if (!localPath.toLowerCase().startsWith((rendererRoot + path.sep).toLowerCase())) return false;
+    return allowedNames.includes(path.basename(localPath).toLowerCase());
+  } catch (_) { return false; }
+}
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 
@@ -101,6 +184,7 @@ class DownloadQueue {
     if (item.cancelled) return;
 
     const { dlUrl, fileName, itemId, originUrl } = item;
+    console.log('[queue] running job:', JSON.stringify({ dlUrl, fileName, itemId, originUrl, freeItemPending: item.freeItemPending }, null, 2));
 
     const rootFolder = store.get('rootFolder', '');
     const tmpDir = rootFolder && fs.existsSync(rootFolder)
@@ -160,17 +244,19 @@ class DownloadQueue {
     // If this came from the free items scraper, mark it as pending review
     if (item.freeItemPending) {
       const rootFolder = store.get('rootFolder', '');
-      const metaPath = path.join(rootFolder, shell.assetId, 'meta.json');
-      if (fs.existsSync(metaPath)) {
+      let assetDir;
+      try { assetDir = resolveExistingAssetDir(rootFolder, shell.assetId); } catch { assetDir = null; }
+      const metaPath = assetDir ? path.join(assetDir, 'meta.json') : null;
+      if (metaPath && fs.existsSync(metaPath)) {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
         meta.freeItemPending = true;
-        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+        writeJsonAtomic(metaPath, meta);
       }
       const freeEntry = {
         assetId: shell.assetId,
         name: shell.meta.name,
         thumbnailPath: shell.meta.thumbnail
-          ? path.join(store.get('rootFolder', ''), shell.assetId, shell.meta.thumbnail)
+          ? (assetDir ? resolveAssetFile(rootFolder, shell.assetId, shell.meta.thumbnail) : null)
           : null,
         boothUrl: originUrl,
         downloadedAt: new Date().toISOString(),
@@ -203,36 +289,39 @@ const downloadQueue = new DownloadQueue();
 
 function handleUrl(url) {
   if (!url) return;
-  console.log('[URL scheme] received:', url);
-
-  if (url.startsWith('vroid.closet://') || url.startsWith('booth-library-manager://')) {
-    handleBoothDownloadUrl(url);
+  try {
+    const intent = parseImportIntent(url);
+    pendingImportIntents.set(intent.filename.toLowerCase(), { ...intent, expiresAt: Date.now() + 10 * 60 * 1000 });
+    return;
+  } catch (_) { /* Try a download protocol next. */ }
+  try {
+    const parsed = parseDownloadProtocol(url);
+    if (parsed.scheme === 'vroid.closet' || parsed.scheme === 'booth-library-manager') {
+      handleBoothDownloadUrl(url);
+    }
+  } catch (err) {
+    console.warn('[URL scheme] rejected:', err.message);
   }
 }
 
 function handleBoothDownloadUrl(url, freeItemPending = false) {
-  console.log('[booth-download] queuing:', url);
-
-  const withProto = url
-    .replace('vroid.closet://', 'https://vroid.closet/')
-    .replace('booth-library-manager://', 'https://booth-library-manager/');
-
-  let dlUrl, itemId, fileName;
+  console.log('[booth-download] raw url:', url);
   try {
-    const params = new URL(withProto).searchParams;
-    dlUrl    = params.get('dlurl');
-    itemId   = params.get('item_id');
-    fileName = params.get('downloadable_filename') || 'download.zip';
+    const parsed = parseDownloadProtocol(url);
+    if (!['vroid.closet', 'booth-library-manager'].includes(parsed.scheme)) throw new Error('Unsupported download scheme');
+    const originUrl = parsed.itemId ? `https://booth.pm/en/items/${parsed.itemId}` : '';
+    const job = {
+      dlUrl: parsed.dlurl,
+      fileName: parsed.filename,
+      itemId: parsed.itemId,
+      originUrl,
+      freeItemPending,
+    };
+    const queueId = downloadQueue.add(job);
+    console.log(`[booth-download] queued #${queueId}`);
   } catch (err) {
-    console.error('[booth-download] failed to parse URL:', err.message);
-    return;
+    console.warn('[booth-download] rejected:', err.message);
   }
-
-  if (!dlUrl) { console.error('[booth-download] missing dlurl'); return; }
-
-  const originUrl = itemId ? `https://booth.pm/en/items/${itemId}` : '';
-  const queueId = downloadQueue.add({ dlUrl, fileName, itemId, originUrl, freeItemPending });
-  console.log(`[booth-download] added to queue as #${queueId} (${downloadQueue.queue.length + 1} total)`);
 }
 
 if (!gotTheLock) {
@@ -240,7 +329,7 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', (event, argv) => {
     // On Windows the URL is passed as the last command-line argument
-    const url = argv.find(arg => arg.startsWith('booth-library-manager://') || arg.startsWith('BunsLM://') || arg.startsWith('vroid.closet://'));
+    const url = argv.find(arg => /^(booth-library-manager|bunslm|rslimman|vroid\.closet):\/\//i.test(arg));
     if (url) handleUrl(url);
 
     if (mainWindow) {
@@ -252,9 +341,13 @@ if (!gotTheLock) {
   app.whenReady().then(() => {
     createTray();
     createMainWindow();
+    const configuredRoot = store.get('rootFolder', '');
+    if (configuredRoot && fs.existsSync(configuredRoot)) {
+      try { cleanupStaging(configuredRoot); } catch (err) { console.warn('[startup] staging cleanup failed:', err.message); }
+    }
 
     // Handle URL if app was cold-launched via a scheme (Windows passes it in argv)
-    const url = process.argv.find(arg => arg.startsWith('booth-library-manager://') || arg.startsWith('BunsLM://') || arg.startsWith('vroid.closet://'));
+    const url = process.argv.find(arg => /^(booth-library-manager|bunslm|rslimman|vroid\.closet):\/\//i.test(arg));
     if (url) handleUrl(url);
 
     // Start monitor if it was enabled on last run
@@ -264,6 +357,12 @@ if (!gotTheLock) {
 
     // Schedule free items auto-scan if interval is set
     scheduleFreeItemsInterval();
+
+    if (app.isPackaged) {
+      autoUpdater.checkForUpdatesAndNotify().catch(err => {
+        logger.warn('autoupdate-check-failed', { message: err.message });
+      });
+    }
   });
 
   app.on('before-quit', () => { app.isQuitting = true; });
@@ -272,12 +371,17 @@ if (!gotTheLock) {
 
 function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgress = null) {
   const https = require('https');
-  const http  = require('http');
 
-  if (redirectCount > 10) return Promise.reject(new Error('Too many redirects'));
+  if (redirectCount > 5) return Promise.reject(new Error('Too many redirects'));
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Only authenticated HTTPS downloads are allowed');
+  } catch (err) {
+    return Promise.reject(new Error(`Invalid download URL: ${err.message}`));
+  }
 
   return new Promise((resolve, reject) => {
-    const proto = url.startsWith('https') ? https : http;
+    const proto = https;
     const options = {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -299,7 +403,13 @@ function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgre
       // Follow redirects
       if (statusCode >= 300 && statusCode < 400 && location) {
         res.resume();
-        const redirectUrl = location.startsWith('/') ? new URL(location, url).href : location;
+        const redirectUrl = new URL(location, url).href;
+        try {
+          const parsedRedirect = new URL(redirectUrl);
+          if (parsedRedirect.protocol !== 'https:' || parsedRedirect.username || parsedRedirect.password) throw new Error('Redirect is not HTTPS');
+        } catch (err) {
+          return reject(new Error(`Unsafe download redirect: ${err.message}`));
+        }
         // Reject if redirect leads to auth/login page
         if (/accounts\.|login|signin|auth/i.test(redirectUrl)) {
           return reject(new Error('Download URL requires authentication — the link may have expired. Please re-download from Booth.'));
@@ -398,15 +508,43 @@ function createMainWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
     },
     title: "BB's LibMan",
     show: false,
   });
 
   mainWindow.loadFile('renderer/index.html');
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedLocalPage(url, ['index.html', 'settings.html'])) event.preventDefault();
+  });
   mainWindow.once('ready-to-show', () => mainWindow.show());
+
+  // Background health check: reconcile the asset index against the real
+  // folders once per session, after the initial (index-served) library load.
+  mainWindow.webContents.once('did-finish-load', () => {
+    setImmediate(() => {
+      const { reconcileIndex } = require('./src/assetManager');
+      let result;
+      try { result = reconcileIndex(store); } catch (e) { console.error('[assetIndex] reconcile failed:', e.message); return; }
+      if (!result) return;
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('refresh-library', {});
+      if (store.get('libraryHealthNotify', false)) {
+        const notif = new Notification({
+          title: "BB's LibMan — Library re-synced",
+          body: `${result.added} added, ${result.removed} missing/corrupt, ${result.changed} changed.`,
+          icon: ICON,
+        });
+        notif.show();
+      }
+    });
+  });
 
   // Minimize to tray instead of taskbar
   mainWindow.on('minimize', (event) => {
@@ -444,9 +582,13 @@ function createModalWindow(importData) {
     parent: mainWindow || undefined,
     icon: ICON,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload-modal.js'),
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
     },
     title: 'Import Asset',
     show: false,
@@ -455,6 +597,10 @@ function createModalWindow(importData) {
   modalWindow.loadFile('renderer/modal.html').catch(() => {
     if (modalWindow && !modalWindow.isDestroyed()) modalWindow.destroy();
     modalWindow = null;
+  });
+  modalWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  modalWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedLocalPage(url, ['modal.html'])) event.preventDefault();
   });
   modalWindow.once('ready-to-show', () => {
     modalWindow.show();
@@ -468,14 +614,21 @@ function createModalWindow(importData) {
 
 function onFileDetected(filePath) {
   const fileName = path.basename(filePath);
+  const key = fileName.toLowerCase();
+  const intent = pendingImportIntents.get(key);
+  if (intent && intent.expiresAt > Date.now()) pendingImportIntents.delete(key);
+  else if (intent) pendingImportIntents.delete(key);
+  const importData = intent && intent.expiresAt > Date.now()
+    ? { originUrl: intent.originUrl, fileName, filePath }
+    : { originUrl: '', fileName, filePath };
 
   if (modalWindow && !modalWindow.isDestroyed()) {
     // Modal already open — push the new file into it
-    modalWindow.webContents.send('modal-file-detected', { filePath, fileName });
+    modalWindow.webContents.send('modal-file-detected', importData);
     modalWindow.restore();
     modalWindow.focus();
   } else {
-    createModalWindow({ originUrl: '', fileName, filePath });
+    createModalWindow(importData);
     if (mainWindow) {
       mainWindow.show();
       mainWindow.focus();
@@ -504,19 +657,18 @@ ipcMain.handle('get-config', () => ({
   downloadsFolder: store.get('downloadsFolder', app.getPath('downloads')),
   monitorEnabled: store.get('monitorEnabled', false),
   notificationsEnabled: store.get('notificationsEnabled', true),
+  libraryHealthNotify: store.get('libraryHealthNotify', false),
   boothEnabled: store.get('boothEnabled', false),
   boothDownloadsFolder: store.get('boothDownloadsFolder', ''),
 }));
 
 ipcMain.handle('get-booth-items', () => {
   const enabled = store.get('boothEnabled', false);
-  console.log('[Booth] enabled:', enabled);
   if (!enabled) return [];
 
   // Resolve path: %AppData%/Roaming/pm.booth.library-manager/data.db
   const roamingDir = path.dirname(app.getPath('userData')); // …/Roaming
   const boothDb = path.join(roamingDir, 'pm.booth.library-manager', 'data.db');
-  console.log('[Booth] db path:', boothDb);
 
   try {
     const initSqlJs = require('sql.js');
@@ -542,9 +694,6 @@ ipcMain.handle('get-booth-items', () => {
       }
       tagStmt.free();
       db.close();
-
-      console.log('[Booth] rows fetched:', rows.length);
-      console.log('[Booth] first 3 rows:', JSON.stringify(rows.slice(0, 3), null, 2));
 
       // Register all BLM tags into the global tag list
       const { registerTags } = require('./src/assetManager');
@@ -585,6 +734,7 @@ ipcMain.handle('set-config', (event, config) => {
   if (config.downloadsFolder !== undefined) store.set('downloadsFolder', config.downloadsFolder);
   if (config.monitorEnabled !== undefined) store.set('monitorEnabled', config.monitorEnabled);
   if (config.notificationsEnabled !== undefined) store.set('notificationsEnabled', config.notificationsEnabled);
+  if (config.libraryHealthNotify !== undefined) store.set('libraryHealthNotify', config.libraryHealthNotify);
   if (config.boothEnabled !== undefined) store.set('boothEnabled', config.boothEnabled);
   if (config.boothDownloadsFolder !== undefined) store.set('boothDownloadsFolder', config.boothDownloadsFolder);
   return true;
@@ -728,12 +878,12 @@ ipcMain.handle('get-scheme-status', () => {
 
 ipcMain.handle('add-file-to-asset', (event, { assetId, filePath }) => {
   const rootFolder = store.get('rootFolder', '');
-  const assetDir   = path.join(rootFolder, assetId);
+  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
   const metaPath   = path.join(assetDir, 'meta.json');
   if (!fs.existsSync(metaPath)) return { error: 'Asset not found' };
 
-  const fileName = path.basename(filePath);
-  const destFile = path.join(assetDir, fileName);
+  const fileName = sanitizeExternalFilename(path.basename(filePath));
+  const destFile = resolveAssetFile(rootFolder, assetId, fileName);
   try {
     fs.renameSync(filePath, destFile);
   } catch (err) {
@@ -744,7 +894,8 @@ ipcMain.handle('add-file-to-asset', (event, { assetId, filePath }) => {
   const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   if (!meta.files) meta.files = [];
   if (!meta.files.includes(fileName)) meta.files.push(fileName);
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  writeJsonAtomic(metaPath, meta);
+  require('./src/assetManager').touchIndexEntry(store, assetId, meta);
   return { assetId, fileName };
 });
 
@@ -797,11 +948,14 @@ ipcMain.handle('open-booth-folder', (event, localFolder) => {
 
 ipcMain.handle('open-asset-folder', (event, assetId) => {
   const rootFolder = store.get('rootFolder', '');
-  const assetPath = path.join(rootFolder, assetId);
-  if (fs.existsSync(assetPath)) shell.openPath(assetPath);
+  try { shell.openPath(resolveExistingAssetDir(rootFolder, assetId)); } catch (_) { return false; }
+  return true;
 });
 
-ipcMain.handle('open-external', (event, url) => shell.openExternal(url));
+ipcMain.handle('open-external', (event, url) => {
+  if (!allowExternalUrl(url)) throw new Error('External URL is not allowed');
+  return shell.openExternal(url);
+});
 
 ipcMain.handle('set-window-title', (event, suffix) => {
   if (mainWindow) {
@@ -837,7 +991,9 @@ ipcMain.on('refresh-library', (event, data) => {
  * can log in; after sign-in we automatically retry the deeplink.
  */
 function downloadFreeItemInternal(deeplinkUrl) {
+  console.log('[free-item-download] deeplink:', deeplinkUrl);
   return new Promise((resolve, reject) => {
+    if (!allowBoothUrl(deeplinkUrl)) return reject(new Error('Invalid Booth URL'));
     const win = new BrowserWindow({
       width: 520,
       height: 660,
@@ -848,6 +1004,8 @@ function downloadFreeItemInternal(deeplinkUrl) {
         partition: 'persist:booth-auth',
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
       },
       title: 'Booth — Sign In',
       autoHideMenuBar: true,
@@ -863,11 +1021,31 @@ function downloadFreeItemInternal(deeplinkUrl) {
     };
 
     const loadDeeplink = () => {
-      if (!win.isDestroyed()) win.loadURL(deeplinkUrl);
+      if (!win.isDestroyed() && allowBoothUrl(deeplinkUrl)) win.loadURL(deeplinkUrl);
     };
+
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      console.log('[free-item-download] window-open:', url);
+      if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
+        handleBoothDownloadUrl(url, false);
+        finish(null);
+      }
+      return { action: 'deny' };
+    });
+    win.webContents.on('will-navigate', (event, url) => {
+      console.log('[free-item-download] will-navigate:', url);
+      if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
+        event.preventDefault();
+        handleBoothDownloadUrl(url, false);
+        finish(null);
+        return;
+      }
+      if (!allowBoothUrl(url)) event.preventDefault();
+    });
 
     // Intercept the scheme redirect before the OS handles it
     win.webContents.on('will-redirect', (event, url) => {
+      console.log('[free-item-download] will-redirect:', url);
       if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
         event.preventDefault();
         handleBoothDownloadUrl(url, false);
@@ -876,15 +1054,20 @@ function downloadFreeItemInternal(deeplinkUrl) {
     });
 
     win.webContents.on('did-navigate', (event, url) => {
+      console.log('[free-item-download] did-navigate:', url);
       if (done) return;
       const isSignIn = /\/users\/sign_in|\/login/i.test(url);
       if (isSignIn) {
         // Need credentials — show the window
         if (!win.isVisible()) win.show();
-      } else if (win.isVisible() && url.includes('booth.pm')) {
+      } else if (win.isVisible() && allowBoothUrl(url)) {
         // User just logged in; retry the deeplink
         setTimeout(loadDeeplink, 400);
       }
+    });
+
+    win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+      console.log('[free-item-download] did-fail-load:', errorCode, errorDescription, validatedURL);
     });
 
     win.on('closed', () => {
@@ -934,11 +1117,13 @@ ipcMain.handle('get-found-free-items', () => store.get('foundFreeItems', []));
 
 ipcMain.handle('keep-free-item', (event, assetId) => {
   const rootFolder = store.get('rootFolder', '');
-  const metaPath = path.join(rootFolder, assetId, 'meta.json');
+  let assetDir;
+  try { assetDir = resolveExistingAssetDir(rootFolder, assetId); } catch { return false; }
+  const metaPath = path.join(assetDir, 'meta.json');
   if (fs.existsSync(metaPath)) {
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     delete meta.freeItemPending;
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    writeJsonAtomic(metaPath, meta);
   }
   const items = store.get('downloadedFreeItems', []);
   store.set('downloadedFreeItems', items.filter(i => i.assetId !== assetId));
@@ -1007,6 +1192,7 @@ async function runFreeItemsScan() {
 // ── Library Scanner ───────────────────────────────────────────────────────────
 
 let scannerCancelled = false;
+let scannerWorker = null;
 
 function find7zip() {
   const candidates = [
@@ -1058,10 +1244,59 @@ ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl })
 
 ipcMain.handle('scanner-cancel', () => {
   scannerCancelled = true;
+  if (scannerWorker) {
+    try { scannerWorker.send({ type: 'cancel' }); } catch {}
+    try { scannerWorker.kill(); } catch {}
+    scannerWorker = null;
+  }
   return true;
 });
 
 ipcMain.handle('scanner-scan', async (event, folderPath) => {
+  if (typeof folderPath !== 'string' || !fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    return { ok: false, error: 'Invalid scan folder' };
+  }
+  if (scannerWorker) return { ok: false, error: 'A scan is already running' };
+  const { fork } = require('child_process');
+  const COMPRESSED_EXTS = new Set(['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.unitypackage', '.nupkg', '.jar', '.whl', '.egg']);
+  const archives = [];
+  const walk = dir => {
+    if (archives.length >= 10000) throw new Error('Too many archives');
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (COMPRESSED_EXTS.has(path.extname(entry.name).toLowerCase())) archives.push(full);
+      if (archives.length >= 10000) throw new Error('Too many archives');
+    }
+  };
+  try { walk(folderPath); } catch (err) { return { ok: false, error: err.message }; }
+  const send = data => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('scanner-progress', data); };
+  const sevenZip = find7zip();
+  if (!sevenZip) { send({ type: 'error', message: '7-Zip not found' }); return { ok: false }; }
+  scannerCancelled = false;
+  send({ type: 'found_archives', count: archives.length });
+  return await new Promise(resolve => {
+    const worker = fork(path.join(__dirname, 'src', 'scannerWorker.js'), [], { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    scannerWorker = worker;
+    let settled = false;
+    const finish = result => { if (settled) return; settled = true; scannerWorker = null; try { worker.kill(); } catch {} resolve(result); };
+    worker.on('message', data => {
+      if (data.type === 'archive') {
+        send({ type: 'scanning', current: data.archive, index: data.index, total: data.total });
+        if (data.found) send({ type: 'result', archive: data.archive, content: data.found });
+      } else if (data.type === 'archive_error') send(data);
+      else if (data.type === 'done') { send(data); finish({ ok: true }); }
+      else if (data.type === 'cancelled') { send(data); finish({ ok: false }); }
+    });
+    worker.on('error', err => { send({ type: 'error', message: err.message }); finish({ ok: false, error: err.message }); });
+    worker.send({ type: 'scan', sevenZip, archives, limits: { maxEntries: 5000, maxEntryBytes: 512 * 1024 * 1024, maxArchiveBytes: 2 * 1024 * 1024 * 1024, pathnameBytes: 64 * 1024, archiveTimeoutMs: 60000 } });
+  });
+});
+
+// Kept temporarily for compatibility while callers migrate; it is not exposed
+// through the preload bridge. Remove after the worker path is stable.
+ipcMain.handle('scanner-scan-legacy', async (event, folderPath) => {
   scannerCancelled = false;
   const { spawnSync } = require('child_process');
   const os = require('os');

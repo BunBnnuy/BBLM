@@ -54,6 +54,7 @@ A dedicated tab that automatically scans Booth.pm for ¥0 VRChat items:
 
 - **Smart detection** — visits each item page and checks all variation prices, so items that are partially free (e.g. "¥0 – ¥300") are caught even when the listing shows a non-zero price
 - **Price range display** — shows the full price range when an item has both free and paid tiers
+- **Grid or List view** — switch between a compact list and a thumbnail grid, remembered across sessions
 - **Paginated list** — thumbnail, name, and price shown in a clean 20-item paginated list; click any row to open the item on Booth
 - **One-click download** — the Download button triggers the full download flow internally (no browser tab opens); a Booth login window appears automatically the first time if needed, and the session is remembered for all future downloads
 - **"In Library" detection** — if an item is already in your BBLM library the button is automatically grayed out with "✔ In Library" text, updating live as downloads complete
@@ -96,6 +97,9 @@ Multiple links triggered in quick succession are handled by a **download queue**
 - **Right-click** — context menu with Edit, Hide, and Delete options
 - **Hide** — remove an asset from the library view without deleting it; restore it from Settings → Hidden Assets
 - **Delete** — permanently delete an asset and all its files
+
+### 🔄 Automatic Updates
+- On launch, BB's LibMan checks GitHub Releases for a newer version, downloads it silently in the background, and installs it the next time the app quits — no manual download needed
 
 ### 🔔 Notifications
 - Desktop notifications for completed and failed downloads, toggleable in Settings
@@ -165,6 +169,16 @@ npm start
 
 ---
 
+## Testing
+
+```bash
+npm test        # regression suite (node --test)
+npm run lint     # ESLint
+npm run check    # lint + test + production dependency audit
+```
+
+---
+
 ## Building a Distributable
 
 Produces a Windows NSIS installer in `dist/`.
@@ -202,13 +216,22 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 
 ```
 ├── main.js                  # Electron main process + download queue
-├── preload.js               # Context bridge (main ↔ renderer)
+├── preload.js               # Context bridge (main window ↔ renderer)
+├── preload-modal.js         # Context bridge (import/edit modal ↔ renderer)
 ├── src/
 │   ├── assetManager.js      # Import, update, delete, shell creation, meta.json
+│   ├── assetTransaction.js  # Staged, all-or-nothing asset import/update commits
+│   ├── atomicFs.js          # Atomic JSON writes + staging directory cleanup
+│   ├── archiveScanner.js    # Library Scanner policy (limits, preflight)
+│   ├── scannerWorker.js     # Sandboxed archive-listing child process
 │   ├── boothFreeScraper.js  # Booth free-item scanner (listing + per-page variation check)
 │   ├── downloadsMonitor.js  # fs.watch + file stability poller
 │   ├── fileWatcher.js       # One-shot file wait (manual import)
-│   └── scraper.js           # Booth JSON API + HTML scraper (title, images, tags)
+│   ├── httpClient.js        # Shared HTTPS client (DNS-pinned, redirect/size/time limits)
+│   ├── logger.js            # Redacted structured logging
+│   ├── protocol.js          # Strict parsers for custom URL schemes
+│   ├── scraper.js           # Booth JSON API + HTML scraper (title, images, tags)
+│   └── security/            # Path containment and outbound network policy
 ├── renderer/
 │   ├── index.html / app.js          # Main library view + pagination + tag filter
 │   ├── freeItems.js                 # Booth Free Items tab logic
@@ -219,6 +242,7 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 ├── assets/
 │   ├── icon.png
 │   └── booth.png
+├── test/                    # node --test regression suite
 └── companion/
     └── RSLimMan.user.js     # Tampermonkey companion script (optional)
 ```

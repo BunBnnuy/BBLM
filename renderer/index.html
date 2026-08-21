@@ -31,8 +31,21 @@
     <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
   </div>
 
+  <div id="release-notes-overlay" class="release-notes-overlay" style="display:none;">
+    <div class="release-notes-modal" role="dialog" aria-modal="true" aria-labelledby="release-notes-title">
+      <div class="release-notes-header">
+        <div><h2 id="release-notes-title">What changed</h2><span id="release-notes-version" class="release-notes-version"></span></div>
+        <button class="btn-ghost" id="btn-release-notes-close" aria-label="Close">×</button>
+      </div>
+      <div id="release-notes-content" class="release-notes-content"></div>
+      <div class="release-notes-actions"><button class="btn-primary" id="btn-release-notes-done">Got it</button></div>
+    </div>
+  </div>
+
   <!-- Library tab -->
   <div id="tab-library" class="tab-panel active">
+    <div id="malware-banners"></div>
+
     <div id="tag-filter-bar" style="display:none;">
       <span class="tag-filter-label">Filter:</span>
       <div id="tag-filter-chips"></div>
@@ -168,6 +181,10 @@
         <span id="dl-pct" class="dl-pct">0%</span>
         <span id="dl-label" class="dl-label"></span>
       </div>
+      <div id="scan-progress" style="display:none;">
+        <div class="dl-bar-track"><div id="scan-bar" class="dl-bar scan-bar"></div></div>
+        <span id="scan-label" class="dl-label"></span>
+      </div>
       <div id="queue-panel" style="display:none;">
         <div id="queue-active"></div>
         <div id="queue-pending-list"></div>
@@ -178,6 +195,23 @@
       <a href="https://github.com/BunBnnuy/BBLM" class="footer-link">view BBLM repo</a>
     </div>
   </footer>
+
+  <div id="malware-modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:9500; align-items:center; justify-content:center;">
+    <div class="malware-modal" id="malware-modal">
+      <div class="malware-modal-title" id="malware-modal-title">⚠ Possible Malware Detected</div>
+      <div class="malware-modal-name" id="malware-modal-name"></div>
+      <p class="malware-modal-desc" id="malware-modal-desc"></p>
+      <div id="malware-modal-summary" class="malware-summary-text"></div>
+      <div id="malware-modal-output" class="malware-output"></div>
+      <div class="malware-modal-actions">
+        <button class="btn-ghost" id="malware-modal-copy">⎘ Copy Output</button>
+        <div class="spacer"></div>
+        <button class="btn-ghost" id="malware-modal-close">Close</button>
+        <button class="btn-ghost" id="malware-modal-flag">Mark as Unsafe</button>
+        <button class="btn-primary" id="malware-modal-safe">✔ Mark as Safe</button>
+      </div>
+    </div>
+  </div>
 
   <div id="drop-overlay">
     <div class="drop-zone" id="drop-zone-new">
@@ -193,6 +227,7 @@
     </div>
   </div>
 
+  <script src="releaseNotes.js"></script>
   <script src="app.js"></script>
   <script src="freeItems.js"></script>
   <script src="scanner.js"></script>

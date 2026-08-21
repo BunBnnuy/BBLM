@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard, powerMonitor } = require('electron');
 process.on('uncaughtException', err => console.error('[CRASH]', err));
 process.on('unhandledRejection', err => console.error('[UNHANDLED REJECTION]', err));
 const path = require('path');
@@ -11,6 +11,9 @@ const { DownloadsMonitor } = require('./src/downloadsMonitor');
 const { parseDownloadProtocol, parseImportIntent } = require('./src/protocol');
 const { resolveExistingAssetDir, resolveAssetFile, sanitizeExternalFilename } = require('./src/security/pathPolicy');
 const { writeJsonAtomic, cleanupStaging } = require('./src/atomicFs');
+const { ensureScannerUpdated } = require('./src/malwareScanner');
+const { scanTargets } = require('./src/malwareScan');
+const { parseReleaseNotes } = require('./src/releaseNotes');
 
 const store = new Store();
 const monitor = new DownloadsMonitor(onFileDetected);
@@ -103,6 +106,160 @@ function isAllowedLocalPage(value, allowedNames) {
 }
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
+
+// ── Malware scanning ──────────────────────────────────────────────────────────
+const SCANNABLE_EXTS = new Set(['.unitypackage', '.zip', '.rar', '.7z']);
+const activeMalwareScans = new Set();
+
+// Fire-and-forget: scans a freshly imported (or manually re-requested) asset's
+// files in the background and updates its meta.json + pushes UI events once
+// the scan completes. `force` bypasses the auto-scan-on-import toggle for
+// scans the user explicitly requested (e.g. via the right-click menu).
+function runMalwareScanForAsset(assetId, { force = false, onDone = null } = {}) {
+  if (!force && !store.get('malwareScanEnabled', true)) return 'disabled';
+  if (!store.get('malwareScannerAvailable', false)) return 'not-available';
+  if (activeMalwareScans.has(assetId)) return 'already-running';
+  const scannerExe = store.get('malwareScannerPath', null);
+  if (!scannerExe) return 'not-available';
+
+  const rootFolder = store.get('rootFolder', '');
+  let assetDir, metaPath, meta;
+  try {
+    assetDir = resolveExistingAssetDir(rootFolder, assetId);
+    metaPath = path.join(assetDir, 'meta.json');
+    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  } catch (err) {
+    logger.warn('malware-scan-setup-failed', { message: err.message });
+    return 'error';
+  }
+
+  const files = (meta.files || []).filter(f => SCANNABLE_EXTS.has(path.extname(f).toLowerCase()));
+  if (files.length === 0) return 'no-files';
+
+  activeMalwareScans.add(assetId);
+  const targets = files.map(f => ({ assetId, filePath: resolveAssetFile(rootFolder, assetId, f) }));
+
+  const notifyProgress = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('malware-scan-progress', payload);
+  };
+  notifyProgress({ assetId, active: true, label: `Scanning ${meta.name || assetId}…` });
+
+  scanTargets(targets, scannerExe, {
+    onProgress: (msg) => {
+      if (msg.type === 'progress') {
+        notifyProgress({ assetId, active: true, label: `Scanning ${msg.file} (${msg.index}/${msg.total})…` });
+      }
+    },
+  }).then(({ results }) => {
+    const SEVERITY_ORDER = ['clean', 'low', 'medium', 'high', 'critical', 'error'];
+    let worst = null;
+    for (const r of results) {
+      if (!worst || SEVERITY_ORDER.indexOf(r.severity) > SEVERITY_ORDER.indexOf(worst.severity)) worst = r;
+    }
+    const severity = worst ? worst.severity : 'clean';
+
+    try {
+      const current = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      current.scanStatus = severity;
+      current.scanScore = worst ? worst.score : null;
+      current.scanFindings = worst ? worst.findings : null;
+      current.scanFile = worst ? worst.scannedFile : null;
+      current.scanRecommendation = worst ? worst.recommendation : null;
+      current.scanOutput = worst ? worst.raw : '';
+      current.scannedAt = new Date().toISOString();
+      current.scanAcknowledged = false;
+      current.scanMarkedSafe = false; // a fresh scan result always supersedes a prior manual override
+      writeJsonAtomic(metaPath, current);
+      const { touchIndexEntry } = require('./src/assetManager');
+      touchIndexEntry(store, assetId, current);
+    } catch (err) {
+      logger.warn('malware-scan-meta-write-failed', { message: err.message });
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('refresh-library', { assetId });
+    if (['critical', 'high', 'medium'].includes(severity)) {
+      notifyProgress({ assetId, active: false });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('malware-scan-flagged', {
+          assetId, name: meta.name || assetId, severity,
+          score: worst ? worst.score : null,
+          findings: worst ? worst.findings : null,
+          scannedFile: worst ? worst.scannedFile : null,
+          recommendation: worst ? worst.recommendation : null,
+          output: worst ? worst.raw : '',
+        });
+      }
+    } else {
+      notifyProgress({ assetId, active: false });
+    }
+  }).catch(err => {
+    logger.warn('malware-scan-failed', { message: err.message });
+    notifyProgress({ assetId, active: false });
+  }).finally(() => {
+    activeMalwareScans.delete(assetId);
+    if (onDone) onDone();
+  });
+  return 'started';
+}
+
+// ── Manual "Scan All" queue ───────────────────────────────────────────────────
+// Queues every scannable asset and runs them one at a time (not concurrently),
+// yielding to any scan already in flight (import-triggered, right-click, or
+// the idle backlog sweep) rather than racing it.
+const manualScanQueue = [];
+let manualScanQueueDraining = false;
+
+function drainManualScanQueue() {
+  if (manualScanQueueDraining) return;
+  if (activeMalwareScans.size > 0) return;
+  while (manualScanQueue.length > 0) {
+    const nextId = manualScanQueue.shift();
+    manualScanQueueDraining = true;
+    const status = runMalwareScanForAsset(nextId, {
+      force: true,
+      onDone: () => { manualScanQueueDraining = false; drainManualScanQueue(); },
+    });
+    if (status === 'started') return; // resumes via onDone once this scan finishes
+    manualScanQueueDraining = false; // synchronous no-op (no files, already running, etc.) — try the next one
+  }
+}
+
+function queueAssetsForManualScan(assetIds) {
+  for (const id of assetIds) if (!manualScanQueue.includes(id)) manualScanQueue.push(id);
+  drainManualScanQueue();
+}
+
+// ── Idle backlog scan ─────────────────────────────────────────────────────────
+// Sweeps the existing library for assets that have never been scanned and
+// checks them one at a time, only while the system has been idle for a while,
+// so it never competes with whatever the user is actively doing.
+const BACKLOG_IDLE_SECONDS = 180; // "a few minutes"
+const BACKLOG_CHECK_INTERVAL_MS = 30_000;
+let backlogScanTimer = null;
+
+function findNextBacklogAsset() {
+  const { getAssets } = require('./src/assetManager');
+  const assets = getAssets(store)
+    .filter(a => !a.scannedAt && (a.files || []).some(f => SCANNABLE_EXTS.has(path.extname(f).toLowerCase())))
+    .sort((a, b) => new Date(a.importedAt) - new Date(b.importedAt));
+  return assets.length ? assets[0].id : null;
+}
+
+function maybeRunBacklogScan() {
+  if (!store.get('malwareBacklogScanEnabled', true)) return;
+  if (!store.get('malwareScannerAvailable', false)) return;
+  if (activeMalwareScans.size > 0) return;
+  if (powerMonitor.getSystemIdleTime() < BACKLOG_IDLE_SECONDS) return;
+
+  let assetId;
+  try { assetId = findNextBacklogAsset(); } catch (err) { logger.warn('malware-backlog-scan-lookup-failed', { message: err.message }); return; }
+  if (assetId) runMalwareScanForAsset(assetId, { force: true });
+}
+
+function startBacklogScanTimer() {
+  if (backlogScanTimer) return;
+  backlogScanTimer = setInterval(maybeRunBacklogScan, BACKLOG_CHECK_INTERVAL_MS);
+}
 
 // ── Download Queue ────────────────────────────────────────────────────────────
 class DownloadQueue {
@@ -240,6 +397,7 @@ class DownloadQueue {
     });
 
     finalizeAssetDownload({ assetId: shell.assetId, filePath: destPath, store });
+    runMalwareScanForAsset(shell.assetId);
 
     // If this came from the free items scraper, mark it as pending review
     if (item.freeItemPending) {
@@ -363,10 +521,15 @@ if (!gotTheLock) {
         logger.warn('autoupdate-check-failed', { message: err.message });
       });
     }
+
+    ensureScannerUpdated(store).catch(err => {
+      logger.warn('malware-scanner-startup-failed', { message: err.message });
+    });
+    startBacklogScanTimer();
   });
 
   app.on('before-quit', () => { app.isQuitting = true; });
-  app.on('quit', () => monitor.stop());
+  app.on('quit', () => { monitor.stop(); if (backlogScanTimer) clearInterval(backlogScanTimer); });
 }
 
 function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgress = null) {
@@ -660,7 +823,31 @@ ipcMain.handle('get-config', () => ({
   libraryHealthNotify: store.get('libraryHealthNotify', false),
   boothEnabled: store.get('boothEnabled', false),
   boothDownloadsFolder: store.get('boothDownloadsFolder', ''),
+  malwareScanEnabled: store.get('malwareScanEnabled', true),
+  malwareBacklogScanEnabled: store.get('malwareBacklogScanEnabled', true),
+  malwareScannerPath: store.get('malwareScannerPath', null),
+  malwareScannerVersion: store.get('malwareScannerVersion', null),
+  malwareScannerAvailable: store.get('malwareScannerAvailable', false),
 }));
+
+ipcMain.handle('get-release-notes', () => {
+  const version = app.getVersion();
+  let markdown = '';
+  try {
+    markdown = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
+  } catch (err) {
+    logger.warn('release-notes-read-failed', { message: err.message });
+  }
+  return {
+    ...parseReleaseNotes(markdown, version),
+    isNew: store.get('releaseNotesVersion', null) !== version,
+  };
+});
+
+ipcMain.handle('acknowledge-release-notes', () => {
+  store.set('releaseNotesVersion', app.getVersion());
+  return true;
+});
 
 ipcMain.handle('get-booth-items', () => {
   const enabled = store.get('boothEnabled', false);
@@ -737,6 +924,81 @@ ipcMain.handle('set-config', (event, config) => {
   if (config.libraryHealthNotify !== undefined) store.set('libraryHealthNotify', config.libraryHealthNotify);
   if (config.boothEnabled !== undefined) store.set('boothEnabled', config.boothEnabled);
   if (config.boothDownloadsFolder !== undefined) store.set('boothDownloadsFolder', config.boothDownloadsFolder);
+  if (config.malwareScanEnabled !== undefined) store.set('malwareScanEnabled', config.malwareScanEnabled);
+  if (config.malwareBacklogScanEnabled !== undefined) store.set('malwareBacklogScanEnabled', config.malwareBacklogScanEnabled);
+  return true;
+});
+
+ipcMain.handle('copy-to-clipboard', (event, text) => {
+  clipboard.writeText(typeof text === 'string' ? text.slice(0, 200 * 1024) : '');
+  return true;
+});
+
+ipcMain.handle('malware-scan-now', (event, assetIds) => {
+  const ids = Array.isArray(assetIds) ? assetIds : [assetIds];
+  const results = {};
+  for (const id of ids) results[id] = runMalwareScanForAsset(id, { force: true });
+  return results;
+});
+
+ipcMain.handle('malware-scan-all', () => {
+  if (!store.get('malwareScannerAvailable', false)) return { ok: false, error: 'not-available' };
+  const { getAssets } = require('./src/assetManager');
+  const ids = getAssets(store)
+    .filter(a => (a.files || []).some(f => SCANNABLE_EXTS.has(path.extname(f).toLowerCase())))
+    .map(a => a.id);
+  if (ids.length === 0) return { ok: false, error: 'no-files' };
+  queueAssetsForManualScan(ids);
+  return { ok: true, queued: ids.length };
+});
+
+ipcMain.handle('malware-scan-acknowledge', (event, assetId) => {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
+  const metaPath = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) return false;
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  meta.scanAcknowledged = true;
+  writeJsonAtomic(metaPath, meta);
+  const { touchIndexEntry } = require('./src/assetManager');
+  touchIndexEntry(store, assetId, meta);
+  return true;
+});
+
+// User override for Medium/Low findings the scanner flagged but the user has
+// reviewed and judged to be a false positive. Cleared automatically the next
+// time this asset is scanned (see runMalwareScanForAsset) so a stale override
+// never masks a genuinely new finding.
+ipcMain.handle('malware-mark-safe', (event, assetId) => {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
+  const metaPath = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) return false;
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  if (meta.scanStatus === 'critical') return false; // Critical can never be waved off as safe
+  meta.scanMarkedSafe = true;
+  meta.scanAcknowledged = true;
+  writeJsonAtomic(metaPath, meta);
+  const { touchIndexEntry } = require('./src/assetManager');
+  touchIndexEntry(store, assetId, meta);
+  return true;
+});
+
+// Explicit opposite of malware-mark-safe: clears any prior safe override so
+// the card's flagged highlight comes back (e.g. the user marked it safe
+// earlier, then changed their mind), and acknowledges so it doesn't also
+// re-queue an automatic popup.
+ipcMain.handle('malware-mark-unsafe', (event, assetId) => {
+  const rootFolder = store.get('rootFolder', '');
+  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
+  const metaPath = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) return false;
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  meta.scanMarkedSafe = false;
+  meta.scanAcknowledged = true;
+  writeJsonAtomic(metaPath, meta);
+  const { touchIndexEntry } = require('./src/assetManager');
+  touchIndexEntry(store, assetId, meta);
   return true;
 });
 
@@ -937,7 +1199,9 @@ ipcMain.handle('wait-for-file', async (event, { fileName, downloadsFolder }) => 
 
 ipcMain.handle('import-asset', async (event, { originUrl, filePath, selectedImageUrl, assetName, tags }) => {
   const { importAsset } = require('./src/assetManager');
-  return await importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, store });
+  const result = await importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, store });
+  runMalwareScanForAsset(result.assetId);
+  return result;
 });
 
 ipcMain.handle('open-booth-folder', (event, localFolder) => {
@@ -1236,6 +1500,7 @@ ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl })
   try {
     const result = await importAsset({ originUrl, filePath: archivePath, selectedImageUrl, assetName, tags, store });
     if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: result.assetId });
+    runMalwareScanForAsset(result.assetId);
     return { ok: true, assetId: result.assetId, assetName: result.meta.name };
   } catch (err) {
     return { ok: false, error: err.message };

@@ -10,6 +10,9 @@ const healthNotifyToggle = document.getElementById('health-notify-toggle');
 const schemeBoothToggle = document.getElementById('scheme-booth-toggle');
 const schemeBunsToggle = document.getElementById('scheme-buns-toggle');
 const schemeVroidToggle = document.getElementById('scheme-vroid-toggle');
+const malwareScanToggle = document.getElementById('malware-scan-toggle');
+const malwareBacklogToggle = document.getElementById('malware-backlog-toggle');
+const malwareScannerStatus = document.getElementById('malware-scanner-status');
 
 function setToggleState(enabled) {
   monitorToggle.textContent = enabled ? 'On' : 'Off';
@@ -39,6 +42,20 @@ function setSchemeToggle(btn, enabled) {
   btn.classList.toggle('btn-ghost', !enabled);
 }
 
+function setMalwareScanToggle(enabled) {
+  malwareScanToggle.textContent = enabled ? 'On' : 'Off';
+  malwareScanToggle.setAttribute('aria-checked', String(enabled));
+  malwareScanToggle.classList.toggle('btn-primary', enabled);
+  malwareScanToggle.classList.toggle('btn-ghost', !enabled);
+}
+
+function setMalwareBacklogToggle(enabled) {
+  malwareBacklogToggle.textContent = enabled ? 'On' : 'Off';
+  malwareBacklogToggle.setAttribute('aria-checked', String(enabled));
+  malwareBacklogToggle.classList.toggle('btn-primary', enabled);
+  malwareBacklogToggle.classList.toggle('btn-ghost', !enabled);
+}
+
 function setBoothToggleState(enabled) {
   boothToggle.textContent = enabled ? 'On' : 'Off';
   boothToggle.setAttribute('aria-checked', String(enabled));
@@ -55,6 +72,35 @@ notificationsToggle.addEventListener('click', () => {
 healthNotifyToggle.addEventListener('click', () => {
   const next = healthNotifyToggle.getAttribute('aria-checked') !== 'true';
   setHealthNotifyToggle(next);
+});
+
+malwareScanToggle.addEventListener('click', () => {
+  const current = malwareScanToggle.getAttribute('aria-checked') === 'true';
+  setMalwareScanToggle(!current);
+});
+
+malwareBacklogToggle.addEventListener('click', () => {
+  const current = malwareBacklogToggle.getAttribute('aria-checked') === 'true';
+  setMalwareBacklogToggle(!current);
+});
+
+document.getElementById('btn-malware-scan-all').addEventListener('click', async () => {
+  const statusEl = document.getElementById('malware-scan-all-status');
+  const result = await window.api.malwareScanAll();
+  if (result.ok) {
+    statusEl.textContent = `Queued ${result.queued} asset${result.queued === 1 ? '' : 's'} — scanning one at a time in the background.`;
+  } else if (result.error === 'not-available') {
+    statusEl.textContent = 'The malware scanner hasn\'t finished downloading yet. Try again in a moment.';
+  } else if (result.error === 'no-files') {
+    statusEl.textContent = 'Nothing scannable in your library yet.';
+  } else {
+    statusEl.textContent = 'Could not start scanning.';
+  }
+});
+
+document.getElementById('scanner-attribution-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.api.openExternal('https://github.com/vicentefelipechile/vrchat-scanner');
 });
 
 monitorToggle.addEventListener('click', async () => {
@@ -154,6 +200,13 @@ async function load() {
   setToggleState(config.monitorEnabled || false);
   setBoothToggleState(config.boothEnabled || false);
   boothDownloadsInput.value = config.boothDownloadsFolder || '';
+  setMalwareScanToggle(config.malwareScanEnabled !== false);
+  setMalwareBacklogToggle(config.malwareBacklogScanEnabled !== false);
+  if (config.malwareScannerAvailable) {
+    malwareScannerStatus.value = `vrchat-scanner ${config.malwareScannerVersion || ''} — ${config.malwareScannerPath || ''}`.trim();
+  } else {
+    malwareScannerStatus.value = 'Not installed yet — will download automatically on next launch with internet access.';
+  }
 
   const schemes = await window.api.getSchemeStatus();
   setSchemeToggle(schemeBoothToggle, schemes['booth-library-manager'] || false);
@@ -186,6 +239,8 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     libraryHealthNotify: healthNotifyToggle.getAttribute('aria-checked') === 'true',
     boothEnabled: boothToggle.getAttribute('aria-checked') === 'true',
     boothDownloadsFolder: boothDownloadsInput.value,
+    malwareScanEnabled: malwareScanToggle.getAttribute('aria-checked') === 'true',
+    malwareBacklogScanEnabled: malwareBacklogToggle.getAttribute('aria-checked') === 'true',
   });
   saveStatus.textContent = '✔ Settings saved.';
   saveStatus.className = 'status success';

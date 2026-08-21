@@ -472,6 +472,17 @@ async function loadLibrary(filter = '') {
   // Refresh dropdown list if it's open
   if (filterDropdown.style.display !== 'none') renderFilterTagList(filterTagSearch.value);
 
+  // Re-surface any unacknowledged malware flags (e.g. after an app restart)
+  for (const asset of assets) {
+    if (['critical', 'high', 'medium'].includes(asset.scanStatus) && !asset.scanAcknowledged && !asset.scanMarkedSafe) {
+      showMalwareAlert({
+        assetId: asset.id, name: asset.name, severity: asset.scanStatus,
+        score: asset.scanScore, findings: asset.scanFindings, scannedFile: asset.scanFile,
+        recommendation: asset.scanRecommendation, output: asset.scanOutput || '',
+      });
+    }
+  }
+
   // Pagination
   renderPagination(filtered.length);
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -484,6 +495,11 @@ async function loadLibrary(filter = '') {
     card.className = 'asset-card';
     if (asset.source === 'booth') card.classList.add('asset-card--booth');
     if (asset.downloadStatus === 'pending') card.classList.add('asset-card--pending');
+    const isConcerning = ['critical', 'high', 'medium'].includes(asset.scanStatus);
+    // Marked-safe assets keep their true severity color on the dot/badge (so
+    // the underlying scan result is still visible and reachable), they just
+    // don't get the attention-grabbing card border/highlight anymore.
+    if (isConcerning && !asset.scanMarkedSafe) card.classList.add('asset-card--flagged', `asset-card--flagged-${asset.scanStatus}`);
     if (asset.id) card.dataset.assetId = asset.id;
     card.title = asset.originUrl || '';
 
@@ -506,6 +522,18 @@ async function loadLibrary(filter = '') {
     const originLinkHtml = asset.originUrl
       ? `<button class="card-origin-link" title="Open original listing" aria-label="Open original listing">↗</button>`
       : '';
+
+    const scanBadgeHtml = isConcerning
+      ? `<button class="scan-badge scan-badge--${asset.scanStatus}" title="${asset.scanMarkedSafe ? 'Marked safe by you — click for details' : 'Malware scan flagged this asset — click for details'}">⚠</button>`
+      : '';
+
+    const SCAN_DOT_LABELS = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', clean: 'Clean', error: 'Scan error' };
+    const scanDotStatus = SCAN_DOT_LABELS[asset.scanStatus] ? asset.scanStatus : 'untested';
+    const scanDotLabel = asset.scanMarkedSafe
+      ? `${SCAN_DOT_LABELS[asset.scanStatus] || asset.scanStatus} (marked safe by you)`
+      : (SCAN_DOT_LABELS[asset.scanStatus] || 'Not scanned yet');
+    const scanDotTag = asset.scanStatus ? 'button' : 'span';
+    const scanDotHtml = `<${scanDotTag} class="scan-dot scan-dot--${scanDotStatus}" title="Malware scan: ${scanDotLabel}${asset.scanStatus ? ' — click for details' : ''}"></${scanDotTag}>`;
 
     const isPending = asset.downloadStatus === 'pending';
     const initPercent = (asset.id && pendingDownloads[asset.id]) || 0;
@@ -534,12 +562,13 @@ async function loadLibrary(filter = '') {
         ${thumbHtml}
         ${boothBadge}
         ${originLinkHtml}
+        ${scanBadgeHtml}
         ${pendingOverlay}
       </div>
       <div class="asset-info">
         <div class="asset-name">${escHtml(asset.name)}</div>
         ${tagHtml}
-        <div class="asset-date">${date}</div>
+        <div class="asset-date">${date}${scanDotHtml}</div>
       </div>`;
 
     // ── Click handling: delay single-click to disambiguate from double-click ──
@@ -580,6 +609,23 @@ async function loadLibrary(filter = '') {
       originLinkEl.addEventListener('dblclick', e => e.stopPropagation());
     }
 
+    // ── Scan badge / status dot: open the malware scan report for this asset ──
+    const openThisAssetScanModal = () => openScanDetailsModal({
+      assetId: asset.id, name: asset.name, severity: asset.scanStatus,
+      score: asset.scanScore, findings: asset.scanFindings, scannedFile: asset.scanFile,
+      recommendation: asset.scanRecommendation, output: asset.scanOutput || '',
+    });
+    const scanBadgeEl = card.querySelector('.scan-badge');
+    if (scanBadgeEl) {
+      scanBadgeEl.addEventListener('click', e => { e.stopPropagation(); openThisAssetScanModal(); });
+      scanBadgeEl.addEventListener('dblclick', e => e.stopPropagation());
+    }
+    const scanDotEl = card.querySelector('.scan-dot');
+    if (scanDotEl && scanDotEl.tagName === 'BUTTON') {
+      scanDotEl.addEventListener('click', e => { e.stopPropagation(); openThisAssetScanModal(); });
+      scanDotEl.addEventListener('dblclick', e => e.stopPropagation());
+    }
+
     // ── Tag pill clicks: filter by tag ──
     card.querySelectorAll('.tag-pill--card').forEach(pill => {
       pill.addEventListener('click', e => {
@@ -613,6 +659,8 @@ async function loadLibrary(filter = '') {
               await window.api.hideAsset(asset.id);
               loadLibrary(searchInput.value);
             }},
+          'separator',
+          { label: '🛡️  Scan for Malware', action: () => scanAssetsForMalware([asset.id]) },
           'separator',
           { label: '🗑  Delete', danger: true, action: async () => {
               if (!confirm(`Delete "${asset.name}" and all its files? This cannot be undone.`)) return;
@@ -723,6 +771,195 @@ window.api.onDownloadProgress(({ itemId, percent, done }) => {
   dlPct.textContent   = percent + '%';
   dlProgress.style.display = 'flex';
   window.api.setWindowTitle(label);
+});
+
+// ── Malware scanning UI ──────────────────────────────────────────────────────
+const malwareBanners = document.getElementById('malware-banners');
+const malwareModal = document.getElementById('malware-modal');
+const malwareModalOverlay = document.getElementById('malware-modal-overlay');
+const malwareModalTitle = document.getElementById('malware-modal-title');
+const malwareModalDesc = document.getElementById('malware-modal-desc');
+const malwareModalName = document.getElementById('malware-modal-name');
+const malwareModalOutput = document.getElementById('malware-modal-output');
+const malwareModalCopy = document.getElementById('malware-modal-copy');
+const malwareModalClose = document.getElementById('malware-modal-close');
+const malwareModalFlag = document.getElementById('malware-modal-flag');
+const malwareModalSafe = document.getElementById('malware-modal-safe');
+
+let criticalQueue = [];
+let currentCritical = null; // the scan result currently shown in the modal (auto-critical or a manual "view details" click)
+const shownScanBanners = new Set(); // assetIds that already have a banner rendered this session
+
+const MODAL_SEVERITY_COPY = {
+  critical: { title: '⚠ Possible Malware Detected', desc: 'This asset was flagged as <strong>Critical</strong> severity by the vrchat-scanner antimalware check. Review the scan output before opening it in Unity.' },
+  high:     { title: '⚠ Suspicious Asset',           desc: 'This asset was flagged as <strong>High</strong> severity by the vrchat-scanner antimalware check. Review the scan output before opening it in Unity.' },
+  medium:   { title: '⚠ Scan Notice',                 desc: 'This asset was flagged as <strong>Medium</strong> severity by the vrchat-scanner antimalware check.' },
+  low:      { title: 'Scan Details',                  desc: 'This asset was flagged as <strong>Low</strong> severity — no action needed.' },
+  clean:    { title: 'Scan Details',                  desc: 'This asset passed the vrchat-scanner antimalware check.' },
+};
+
+// The scanner's raw stdout is JSON meant for machines. Turn it into a short,
+// human summary for on-screen display; the raw JSON is only ever copied via
+// the "Copy Output" buttons (info.output), never shown to the user directly.
+const SEVERITY_LABELS = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', clean: 'Clean' };
+
+// vrcstorage-scanner findings look like:
+// { id, severity, points, location, detail, context, line_numbers }
+function scanFindingsSorted(findings) {
+  if (!Array.isArray(findings) || findings.length === 0) return [];
+  return [...findings].sort((a, b) => (b.points || 0) - (a.points || 0));
+}
+
+function findingsTableHtml(findings) {
+  const items = scanFindingsSorted(findings);
+  if (items.length === 0) return '<p class="malware-no-findings">No detailed findings were reported by the scanner.</p>';
+  const rows = items.map(f => {
+    if (!f || typeof f !== 'object') return `<tr><td colspan="4">${escHtml(String(f))}</td></tr>`;
+    const sev = f.severity || '';
+    const detail = f.detail || f.description || f.message || f.name || f.id || 'Unknown finding';
+    const loc = f.location || f.file || f.path || '';
+    const points = f.points !== null && f.points !== undefined ? f.points : '';
+    return `<tr>
+      <td><span class="finding-sev finding-sev--${escHtml(String(sev).toLowerCase())}">${escHtml(sev)}</span></td>
+      <td>${escHtml(String(points))}</td>
+      <td>${escHtml(detail)}</td>
+      <td class="finding-loc">${escHtml(loc)}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="findings-table"><thead><tr><th>Severity</th><th>Pts</th><th>Detail</th><th>Location</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function formatScanSummaryText(info) {
+  const parts = [`Severity: <b>${escHtml(SEVERITY_LABELS[info.severity] || info.severity)}</b>${typeof info.score === 'number' ? ` (score ${info.score})` : ''}`];
+  if (info.recommendation) parts.push(`Recommendation: <b>${escHtml(info.recommendation)}</b>`);
+  if (info.scannedFile) parts.push(`File: ${escHtml(info.scannedFile)}`);
+  return parts.join('<br>');
+}
+
+// Close/Mark as Unsafe are available regardless of severity — Close takes no
+// action at all (just dismisses). Mark as Safe is hidden for Critical: a
+// Critical finding shouldn't be one click away from being waved off.
+
+function renderScanModal(info) {
+  currentCritical = info;
+  const copy = MODAL_SEVERITY_COPY[info.severity] || { title: 'Scan Details', desc: `Malware scan result: <strong>${SEVERITY_LABELS[info.severity] || info.severity}</strong>.` };
+  malwareModal.className = `malware-modal malware-modal--${info.severity || 'unknown'}`;
+  malwareModalTitle.textContent = copy.title;
+  malwareModalDesc.innerHTML = copy.desc;
+  malwareModalName.textContent = info.name;
+  document.getElementById('malware-modal-summary').innerHTML = formatScanSummaryText(info);
+  malwareModalOutput.innerHTML = findingsTableHtml(info.findings);
+  malwareModalSafe.style.display = info.severity === 'critical' ? 'none' : '';
+  malwareModalOverlay.style.display = 'flex';
+}
+
+// Advances the queue of automatically-surfaced Critical alerts (shown one at
+// a time on flag/refresh). Also doubles as "close" for the modal in general —
+// if nothing else is queued it just hides the overlay.
+function advanceCriticalQueue() {
+  const next = criticalQueue.shift() || null;
+  if (!next) { currentCritical = null; malwareModalOverlay.style.display = 'none'; return; }
+  renderScanModal(next);
+}
+
+// Opens the details modal on demand (e.g. clicking the scan badge on a card),
+// regardless of severity and independent of the auto-critical queue above.
+function openScanDetailsModal(info) {
+  renderScanModal(info);
+}
+
+function renderScanBanner(info) {
+  if (shownScanBanners.has(info.assetId)) return;
+  shownScanBanners.add(info.assetId);
+  const isDanger = info.severity === 'high';
+  const el = document.createElement('div');
+  el.className = `scan-banner ${isDanger ? 'scan-banner--danger' : 'scan-banner--warning'}`;
+  el.dataset.assetId = info.assetId;
+  const findingsCount = Array.isArray(info.findings) ? info.findings.length : 0;
+  const findingsNote = findingsCount ? ` ${findingsCount} issue${findingsCount === 1 ? '' : 's'} found.` : '';
+  const desc = isDanger
+    ? `"${escHtml(info.name)}" was flagged <strong>High</strong> severity.${findingsNote}`
+    : `"${escHtml(info.name)}" seems suspicious (Medium severity).${findingsNote}`;
+  el.innerHTML = `
+    <span class="scan-banner-text">⚠ ${desc}</span>
+    <div class="scan-banner-actions">
+      <button class="btn-ghost scan-banner-copy" style="font-size:11px;padding:3px 10px;">⎘ Copy Output</button>
+      <button class="btn-ghost scan-banner-flag" style="font-size:11px;padding:3px 10px;">Mark as Unsafe</button>
+      <button class="btn-primary scan-banner-safe" style="font-size:11px;padding:3px 10px;">✔ Mark as Safe</button>
+      <button class="scan-banner-close" title="Close — take no action">✕</button>
+    </div>`;
+  el.querySelector('.scan-banner-copy').addEventListener('click', () => window.api.copyToClipboard(info.output || ''));
+  const dismiss = async () => { await window.api.malwareScanAcknowledge(info.assetId); el.remove(); shownScanBanners.delete(info.assetId); };
+  el.querySelector('.scan-banner-close').addEventListener('click', dismiss);
+  el.querySelector('.scan-banner-flag').addEventListener('click', async () => {
+    await window.api.malwareMarkUnsafe(info.assetId);
+    el.remove();
+    shownScanBanners.delete(info.assetId);
+    loadLibrary(searchInput.value);
+  });
+  el.querySelector('.scan-banner-safe').addEventListener('click', async () => {
+    await window.api.malwareMarkSafe(info.assetId);
+    el.remove();
+    shownScanBanners.delete(info.assetId);
+    loadLibrary(searchInput.value);
+  });
+  malwareBanners.appendChild(el);
+}
+
+function showMalwareAlert(info) {
+  if (info.severity === 'critical') {
+    criticalQueue = criticalQueue.filter(i => i.assetId !== info.assetId);
+    criticalQueue.push(info);
+    if (!currentCritical) advanceCriticalQueue();
+    return;
+  }
+  renderScanBanner(info);
+}
+
+malwareModalCopy.addEventListener('click', () => window.api.copyToClipboard(currentCritical ? currentCritical.output || '' : ''));
+malwareModalClose.addEventListener('click', () => advanceCriticalQueue());
+malwareModalFlag.addEventListener('click', async () => {
+  if (currentCritical) {
+    await window.api.malwareMarkUnsafe(currentCritical.assetId);
+    loadLibrary(searchInput.value);
+  }
+  advanceCriticalQueue();
+});
+malwareModalSafe.addEventListener('click', async () => {
+  if (currentCritical) {
+    await window.api.malwareMarkSafe(currentCritical.assetId);
+    loadLibrary(searchInput.value);
+  }
+  advanceCriticalQueue();
+});
+
+window.api.onMalwareScanFlagged(info => showMalwareAlert(info));
+
+const SCAN_STATUS_MESSAGES = {
+  'not-available': 'The malware scanner hasn\'t finished downloading yet. Try again in a moment.',
+  'no-files': 'Nothing scannable in this asset (no .unitypackage, .zip, .rar, or .7z files).',
+  'already-running': 'A scan for this asset is already running.',
+  'disabled': 'Malware scanning is turned off in Settings.',
+  'error': 'Could not start the scan — the asset files may be missing.',
+};
+
+async function scanAssetsForMalware(assetIds) {
+  const results = await window.api.malwareScanNow(assetIds);
+  const problems = Object.entries(results).filter(([, status]) => status !== 'started');
+  if (problems.length > 0) {
+    const lines = problems.map(([id, status]) => `${id}: ${SCAN_STATUS_MESSAGES[status] || status}`);
+    alert(lines.join('\n'));
+  }
+}
+
+// ── Scan progress bar (footer) ───────────────────────────────────────────────
+const scanProgress = document.getElementById('scan-progress');
+const scanLabel    = document.getElementById('scan-label');
+
+window.api.onMalwareScanProgress(({ active, label }) => {
+  if (!active) { scanProgress.style.display = 'none'; return; }
+  scanLabel.textContent = label || 'Scanning…';
+  scanProgress.style.display = 'flex';
 });
 
 searchInput.addEventListener('input', () => { currentPage = 1; loadLibrary(searchInput.value); });

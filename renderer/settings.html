@@ -61,6 +61,32 @@
 
 
     <div class="settings-section">
+      <h3>Malware Scanning</h3>
+      <p style="font-size:12px; color:var(--text-dim)">Scans imported .unitypackage files (and .zip/.rar/.7z archives that contain them) with the <a href="#" id="scanner-attribution-link" class="footer-link">vrchat-scanner</a> CLI in the background after import.</p>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+        <label class="toggle-label" for="malware-scan-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
+          Scan imported assets
+        </label>
+        <button id="malware-scan-toggle" class="btn-ghost" role="switch" aria-checked="true" style="min-width:56px;">On</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-dim); margin-top:10px;">Also scan assets already in your library that haven't been checked yet — one at a time, only after the computer has been idle for a few minutes, so it never competes with what you're doing.</p>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+        <label class="toggle-label" for="malware-backlog-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
+          Scan existing library when idle
+        </label>
+        <button id="malware-backlog-toggle" class="btn-ghost" role="switch" aria-checked="true" style="min-width:56px;">On</button>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Scanner status (managed automatically, not editable)</label>
+        <input type="text" id="malware-scanner-status" readonly />
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:10px;">
+        <button class="btn-secondary" id="btn-malware-scan-all">🛡️ Scan All Assets Now</button>
+        <span id="malware-scan-all-status" style="font-size:12px; color:var(--text-dim);"></span>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>Booth Library Manager</h3>
       <p style="font-size:12px; color:var(--text-dim)">When enabled, items from your local Booth Library Manager database are shown in the library alongside your own assets.</p>
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
@@ -104,10 +130,27 @@
     </div>
 
     <div class="settings-section">
+      <h3>About</h3>
+      <p style="font-size:12px; color:var(--text-dim)">Review the changes included in the currently installed version.</p>
+      <button class="btn-secondary" id="btn-show-release-notes">Show Release Notes</button>
+    </div>
+
+    <div class="settings-section">
       <h3>Hidden Assets</h3>
       <p style="font-size:12px; color:var(--text-dim)">Assets you've hidden from the library. Click Unhide to restore them.</p>
       <div id="hidden-list" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
         <span style="font-size:12px; color:var(--text-dim)" id="hidden-empty">No hidden assets.</span>
+      </div>
+    </div>
+
+    <div id="release-notes-overlay" class="release-notes-overlay" style="display:none;">
+      <div class="release-notes-modal" role="dialog" aria-modal="true" aria-labelledby="release-notes-title">
+        <div class="release-notes-header">
+          <div><h2 id="release-notes-title">What changed</h2><span id="release-notes-version" class="release-notes-version"></span></div>
+          <button class="btn-ghost" id="btn-release-notes-close" aria-label="Close">×</button>
+        </div>
+        <div id="release-notes-content" class="release-notes-content"></div>
+        <div class="release-notes-actions"><button class="btn-primary" id="btn-release-notes-done">Got it</button></div>
       </div>
     </div>
 
@@ -133,11 +176,13 @@
           <div class="oss-entry"><span class="oss-name">cheerio</span> <span class="oss-lic">MIT</span><div class="oss-copy">Copyright (c) cheerio contributors. HTML parsing for thumbnail scraping.</div></div>
           <div class="oss-entry"><span class="oss-name">electron-builder</span> <span class="oss-lic">MIT</span><div class="oss-copy">Copyright (c) electron-userland. Build tooling for packaging the app.</div></div>
           <div class="oss-entry"><span class="oss-name">Node.js</span> <span class="oss-lic">MIT</span><div class="oss-copy">Copyright (c) Node.js contributors. JavaScript runtime.</div></div>
+          <div class="oss-entry"><span class="oss-name">vrchat-scanner</span> <span class="oss-lic">MIT</span><div class="oss-copy">Copyright (c) vicentefelipechile. Antimalware CLI used to scan imported .unitypackage files for known threats. Not bundled — downloaded and kept up to date automatically from <span style="word-break:break-all;">github.com/vicentefelipechile/vrchat-scanner</span>. This is a third-party tool; BB's LibMan is not affiliated with its author and cannot guarantee scan results.</div></div>
         </div>
       </div>
     </div>
   </div>
 
+  <script src="releaseNotes.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

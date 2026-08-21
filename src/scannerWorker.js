@@ -34,7 +34,13 @@ function run7z(binary, args, timeoutMs) {
 
 function parseListing(text, limits) {
   const entries = []; let current = {};
-  for (const line of text.split(/\r?\n/)) {
+  // `7z l -slt` prints one archive-level block first (Path = <the archive
+  // itself>, an absolute path that would otherwise trip invalidEntry below),
+  // then a line of dashes, then one blank-line-separated block per file.
+  // Skip everything up to and including that separator.
+  const sepIndex = text.split(/\r?\n/).findIndex(l => /^-{5,}$/.test(l.trim()));
+  const lines = sepIndex === -1 ? text.split(/\r?\n/) : text.split(/\r?\n/).slice(sepIndex + 1);
+  for (const line of lines) {
     if (!line.trim()) { if (current.Path) entries.push(current); current = {}; continue; }
     const index = line.indexOf(' = '); if (index < 0) continue;
     current[line.slice(0, index)] = line.slice(index + 3);
@@ -57,7 +63,10 @@ async function processArchive(binary, archive, limits) {
   const temp = path.join(os.tmpdir(), `bblm-scan-${crypto.randomUUID()}`);
   fs.mkdirSync(temp, { recursive: true, mode: 0o700 });
   try {
-    await run7z(binary, ['x', '--', archive, `-o${temp}`, '-y'], limits.archiveTimeoutMs);
+    // Switches must precede `--`; 7-Zip treats anything after `--` as a literal
+    // filename/archive argument, not a switch, so `-o`/`-y` placed after it are
+    // silently ignored and nothing gets extracted ("No files to process").
+    await run7z(binary, ['x', `-o${temp}`, '-y', '--', archive], limits.archiveTimeoutMs);
     let found;
     const walk = dir => {
       if (cancelled || found) return;

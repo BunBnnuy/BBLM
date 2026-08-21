@@ -45,6 +45,8 @@ window.addEventListener('drop', (e) => {
 
 contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('get-config'),
+  getReleaseNotes: () => ipcRenderer.invoke('get-release-notes'),
+  acknowledgeReleaseNotes: () => ipcRenderer.invoke('acknowledge-release-notes'),
   setConfig: (config) => ipcRenderer.invoke('set-config', config),
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   getAssets: () => ipcRenderer.invoke('get-assets'),
@@ -102,4 +104,13 @@ contextBridge.exposeInMainWorld('api', {
   scannerSaveResults: (results) => ipcRenderer.invoke('scanner-save-results', results),
   scannerClearResults: () => ipcRenderer.invoke('scanner-clear-results'),
   onScannerProgress: (cb) => ipcRenderer.on('scanner-progress', (event, data) => cb(data)),
+  // Malware scanning
+  copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
+  malwareScanNow: (assetIds) => ipcRenderer.invoke('malware-scan-now', assetIds),
+  malwareScanAll: () => ipcRenderer.invoke('malware-scan-all'),
+  malwareScanAcknowledge: (assetId) => ipcRenderer.invoke('malware-scan-acknowledge', assetId),
+  malwareMarkSafe: (assetId) => ipcRenderer.invoke('malware-mark-safe', assetId),
+  malwareMarkUnsafe: (assetId) => ipcRenderer.invoke('malware-mark-unsafe', assetId),
+  onMalwareScanProgress: (cb) => ipcRenderer.on('malware-scan-progress', (event, data) => cb(data)),
+  onMalwareScanFlagged: (cb) => ipcRenderer.on('malware-scan-flagged', (event, data) => cb(data)),
 });

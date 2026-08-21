@@ -214,7 +214,11 @@ async function load() {
   setSchemeToggle(schemeVroidToggle, schemes['vroid.closet'] || false);
 
   loadHiddenAssets();
+  loadUnityProjects();
 }
+
+// Keep the detected-projects list fresh while Settings is open (heartbeats land every ~5s).
+setInterval(loadUnityProjects, 5000);
 
 document.getElementById('btn-pick-root').addEventListener('click', async () => {
   const folder = await window.api.pickFolder();
@@ -230,6 +234,32 @@ document.getElementById('btn-pick-booth-downloads').addEventListener('click', as
   const folder = await window.api.pickFolder();
   if (folder) boothDownloadsInput.value = folder;
 });
+
+document.getElementById('btn-reveal-unity-companion').addEventListener('click', () => {
+  window.api.revealUnityCompanion();
+});
+
+async function loadUnityProjects() {
+  const listEl = document.getElementById('unity-projects-list');
+  const emptyEl = document.getElementById('unity-projects-empty');
+  const projects = await window.api.getUnityProjects();
+
+  Array.from(listEl.querySelectorAll('.unity-project-row')).forEach(el => el.remove());
+
+  if (projects.length === 0) {
+    emptyEl.style.display = '';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  for (const project of projects) {
+    const row = document.createElement('div');
+    row.className = 'unity-project-row';
+    row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:6px 8px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); font-size:13px;';
+    row.innerHTML = `<span style="color:#4caf50;">●</span> <span style="flex:1;">${escHtml(project.projectName)}</span> <span style="font-size:11px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px;">${escHtml(project.projectPath)}</span>`;
+    listEl.appendChild(row);
+  }
+}
 
 document.getElementById('btn-save').addEventListener('click', async () => {
   await window.api.setConfig({

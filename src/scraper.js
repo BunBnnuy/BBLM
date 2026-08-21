@@ -69,6 +69,7 @@ async function scrapePageMeta(originUrl) {
     if (data) {
       const name = data.name || extractNameFromUrl(originUrl);
       const tags = Array.isArray(data.tags) ? data.tags.map(t => t.name).filter(Boolean) : [];
+      const isAdult = !!data.is_adult;
       const images = [];
       const seen = new Set();
       if (Array.isArray(data.images)) {
@@ -77,7 +78,7 @@ async function scrapePageMeta(originUrl) {
           if (url && !seen.has(url)) { seen.add(url); images.push({ url, source: 'booth-api' }); }
         }
       }
-      return { name, images, tags };
+      return { name, images, tags, isAdult };
     }
   }
 
@@ -161,7 +162,7 @@ async function scrapePageMeta(originUrl) {
     });
   }
 
-  return { name, images, tags };
+  return { name, images, tags, isAdult: false };
 }
 
 // Keep scrapeImages as a thin wrapper for backwards compat

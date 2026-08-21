@@ -131,7 +131,7 @@ function registerTags(tags, store) {
   store.set('allTags', [...existing].sort((a, b) => a.localeCompare(b)));
 }
 
-async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, store }) {
+async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, isAdult, store }) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
@@ -181,6 +181,7 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, t
     thumbnail: thumbnailPath ? 'thumbnail.png' : null,
     importedAt: new Date().toISOString(),
     tags: tags || [],
+    isAdult: !!isAdult,
   };
   try {
     writeJsonAtomic(path.join(assetDir, 'meta.json'), meta);
@@ -215,7 +216,7 @@ function getAssets(store) {
   return materialize(rootFolder, cache.entries);
 }
 
-async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, store }) {
+async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, isAdult, store }) {
   const rootFolder = store.get('rootFolder', '');
   const assetDir = resolveExistingAssetDir(rootFolder, assetId);
   const metaPath = path.join(assetDir, 'meta.json');
@@ -228,6 +229,7 @@ async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, s
     meta.tags = tags;
     registerTags(tags, store);
   }
+  if (isAdult !== undefined) meta.isAdult = !!isAdult;
 
   if (selectedImageUrl) {
     const rawPath = path.join(assetDir, 'thumbnail_raw.tmp');
@@ -261,7 +263,7 @@ function deleteAsset({ assetId, store }) {
   return { assetId };
 }
 
-async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, store }) {
+async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store }) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
@@ -299,6 +301,7 @@ async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, 
     thumbnail: thumbnailPath ? 'thumbnail.png' : null,
     importedAt: new Date().toISOString(),
     tags: tags || [],
+    isAdult: !!isAdult,
     downloadStatus: 'pending',
   };
   writeJsonAtomic(path.join(assetDir, 'meta.json'), meta);

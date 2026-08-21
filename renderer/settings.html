@@ -32,6 +32,21 @@
     </div>
 
     <div class="settings-section">
+      <h3>Unity Import</h3>
+      <p style="font-size:12px; color:var(--text-dim)">Import the companion package into any Unity project once, and it will show up here automatically whenever that project is open. Then right-click an archive asset and choose "Import to Unity" to select files and a target project.</p>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+        <button class="btn-secondary" id="btn-reveal-unity-companion">📂 Get Companion Package</button>
+        <span style="font-size:12px; color:var(--text-dim);">Import BBLM_Importer.unitypackage into your project once.</span>
+      </div>
+      <div class="field" style="margin-top:12px;">
+        <label>Currently detected open Unity projects</label>
+        <div id="unity-projects-list" style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+          <span style="font-size:12px; color:var(--text-dim)" id="unity-projects-empty">None detected. Open a project with the companion package installed.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>Notifications</h3>
       <p style="font-size:12px; color:var(--text-dim)">Show desktop notifications when downloads complete or fail.</p>
       <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">

@@ -4,7 +4,7 @@ const searchInput = document.getElementById('search');
 const btnSort = document.getElementById('btn-sort');
 const btnView = document.getElementById('btn-view');
 const btnAddAsset = document.getElementById('btn-add-asset');
-const assetCount = document.getElementById('asset-count');
+const btnAdultFilter = document.getElementById('btn-adult-filter');
 
 // ── Pagination state ─────────────────────────────────────────────────────────
 const PAGE_SIZES = [10, 30, 50];
@@ -21,6 +21,7 @@ function initPagination() {
       localStorage.setItem('pageSize', pageSize);
       document.querySelectorAll('.pag-size-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.size) === pageSize));
       loadLibrary(searchInput.value);
+      document.getElementById('library').scrollTo({ top: 0, behavior: 'smooth' });
     });
   });
 
@@ -34,6 +35,7 @@ let lastPage = 1;
 function goToPage(p) {
   currentPage = Math.max(1, Math.min(p, lastPage));
   loadLibrary(searchInput.value);
+  document.getElementById('library').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function renderPagination(totalFiltered) {
@@ -86,6 +88,24 @@ const filterTagList  = document.getElementById('filter-tag-list');
 
 let activeTagFilters = new Set(); // multi-tag filter
 let allTagCounts = {};            // tag → count across all assets (populated in loadLibrary)
+
+const THREAT_LEVELS = [
+  { key: 'critical',  label: 'Critical' },
+  { key: 'high',       label: 'High' },
+  { key: 'medium',     label: 'Medium' },
+  { key: 'low',        label: 'Low' },
+  { key: 'clean',      label: 'Clean' },
+  { key: 'error',      label: 'Scan error' },
+  { key: 'untested',   label: 'Not scanned' },
+];
+const THREAT_LABELS = Object.fromEntries(THREAT_LEVELS.map(t => [t.key, t.label]));
+
+const btnThreatFilter      = document.getElementById('btn-threat-filter');
+const threatFilterDropdown = document.getElementById('threat-filter-dropdown');
+const threatFilterList     = document.getElementById('threat-filter-list');
+
+let activeThreatFilters = new Set(); // multi-select threat level filter
+let allThreatCounts = {};            // threat level → count across all assets (populated in loadLibrary)
 
 // ── Toggle dropdown ──
 btnFilter.addEventListener('click', e => {
@@ -147,17 +167,26 @@ function toggleTagFilter(tag) {
 }
 
 function updateFilterBar() {
-  const active = [...activeTagFilters];
-  tagFilterBar.style.display = active.length ? 'flex' : 'none';
-  tagFilterChips.innerHTML = active
+  const activeTags = [...activeTagFilters];
+  const activeThreats = [...activeThreatFilters];
+  tagFilterBar.style.display = (activeTags.length || activeThreats.length) ? 'flex' : 'none';
+  const tagChips = activeTags
     .map(t => `<span class="tag-pill tag-pill--active" data-tag="${escHtml(t)}">${escHtml(t)}<button class="tag-pill-remove" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;padding:0 0 0 3px;">×</button></span>`)
     .join('');
+  const threatChips = activeThreats
+    .map(t => `<span class="tag-pill tag-pill--active" data-threat="${escHtml(t)}">⚠ ${escHtml(THREAT_LABELS[t] || t)}<button class="tag-pill-remove" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;padding:0 0 0 3px;">×</button></span>`)
+    .join('');
+  tagFilterChips.innerHTML = tagChips + threatChips;
   tagFilterChips.querySelectorAll('.tag-pill-remove').forEach(btn => {
-    btn.addEventListener('click', () => toggleTagFilter(btn.parentElement.dataset.tag));
+    const pill = btn.parentElement;
+    if (pill.dataset.tag !== undefined) btn.addEventListener('click', () => toggleTagFilter(pill.dataset.tag));
+    else btn.addEventListener('click', () => toggleThreatFilter(pill.dataset.threat));
   });
-  // Update filter button style
-  btnFilter.classList.toggle('btn-filter--active', active.length > 0);
-  btnFilter.textContent = active.length ? `⌖ Tags (${active.length})` : '⌖ Tags';
+  // Update filter button styles
+  btnFilter.classList.toggle('btn-filter--active', activeTags.length > 0);
+  btnFilter.textContent = activeTags.length ? `⌖ Tags (${activeTags.length})` : '⌖ Tags';
+  btnThreatFilter.classList.toggle('btn-filter--active', activeThreats.length > 0);
+  btnThreatFilter.textContent = activeThreats.length ? `⚠ Threat (${activeThreats.length})` : '⚠ Threat';
 }
 
 // Legacy single-tag click from card pills
@@ -171,9 +200,51 @@ function setTagFilter(tag) {
 
 document.getElementById('btn-clear-tag-filter').addEventListener('click', () => {
   activeTagFilters.clear();
+  activeThreatFilters.clear();
   updateFilterBar();
   loadLibrary(searchInput.value);
 });
+
+// ── Threat level filter ──
+btnThreatFilter.addEventListener('click', e => {
+  e.stopPropagation();
+  const open = threatFilterDropdown.style.display !== 'none';
+  threatFilterDropdown.style.display = open ? 'none' : 'flex';
+  if (!open) renderThreatFilterList();
+});
+
+document.addEventListener('click', e => {
+  if (!threatFilterDropdown.contains(e.target) && e.target !== btnThreatFilter) {
+    threatFilterDropdown.style.display = 'none';
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') threatFilterDropdown.style.display = 'none';
+});
+
+function renderThreatFilterList() {
+  threatFilterList.innerHTML = '';
+  THREAT_LEVELS.forEach(({ key, label }) => {
+    const count = allThreatCounts[key] || 0;
+    const item = document.createElement('div');
+    item.className = 'filter-tag-item' + (activeThreatFilters.has(key) ? ' active' : '');
+    item.innerHTML = `<span>${escHtml(label)}</span><span class="tag-count">${count}</span>`;
+    item.addEventListener('click', () => toggleThreatFilter(key));
+    threatFilterList.appendChild(item);
+  });
+}
+
+function toggleThreatFilter(key) {
+  if (activeThreatFilters.has(key)) {
+    activeThreatFilters.delete(key);
+  } else {
+    activeThreatFilters.add(key);
+  }
+  currentPage = 1;
+  updateFilterBar();
+  renderThreatFilterList();
+  loadLibrary(searchInput.value);
+}
 
 // Footer external link
 document.querySelector('.footer-link').addEventListener('click', e => {
@@ -205,6 +276,25 @@ btnView.addEventListener('click', () => {
 function updateSortButton() {
   btnSort.textContent = sortMode === 'date' ? '⇅ Date' : '⇅ A–Z';
 }
+
+// adult content filter: 'all' (show everything) | 'hide' (hide adult) | 'only' (adult only)
+const ADULT_FILTER_MODES = ['all', 'hide', 'only'];
+const ADULT_FILTER_LABELS = { all: '🔞 Show All', hide: '🔞 Hide Adult', only: '🔞 Adult Only' };
+let adultFilterMode = localStorage.getItem('adultFilterMode') || 'all';
+
+function updateAdultFilterButton() {
+  btnAdultFilter.textContent = ADULT_FILTER_LABELS[adultFilterMode];
+  btnAdultFilter.classList.toggle('btn-filter--active', adultFilterMode !== 'all');
+}
+
+btnAdultFilter.addEventListener('click', () => {
+  const idx = ADULT_FILTER_MODES.indexOf(adultFilterMode);
+  adultFilterMode = ADULT_FILTER_MODES[(idx + 1) % ADULT_FILTER_MODES.length];
+  localStorage.setItem('adultFilterMode', adultFilterMode);
+  updateAdultFilterButton();
+  currentPage = 1;
+  loadLibrary(searchInput.value);
+});
 
 btnSort.addEventListener('click', () => {
   sortMode = sortMode === 'date' ? 'alpha' : 'date';
@@ -444,12 +534,9 @@ async function loadLibrary(filter = '') {
   allTagCounts = {};
   all.forEach(a => (a.tags || []).forEach(t => { allTagCounts[t] = (allTagCounts[t] || 0) + 1; }));
 
-  // Update asset counter
-  const localCount = assets.length;
-  const boothCount = boothNormalised.length;
-  const totalCount = all.length;
-  assetCount.textContent = `${totalCount} assets`;
-  assetCount.title = `${localCount} local · ${boothCount} from Booth Library Manager`;
+  // Build threat level counts from full unfiltered list
+  allThreatCounts = {};
+  all.forEach(a => { const s = a.scanStatus || 'untested'; allThreatCounts[s] = (allThreatCounts[s] || 0) + 1; });
 
   let filtered = filter
     ? all.filter(a => a.name.toLowerCase().includes(filter.toLowerCase()) || (a.id || '').toLowerCase().includes(filter.toLowerCase()))
@@ -463,14 +550,27 @@ async function loadLibrary(filter = '') {
     });
   }
 
+  // Apply threat level filter (any selected level matches — OR logic)
+  if (activeThreatFilters.size > 0) {
+    filtered = filtered.filter(a => activeThreatFilters.has(a.scanStatus || 'untested'));
+  }
+
+  // Apply adult content filter
+  if (adultFilterMode === 'hide') {
+    filtered = filtered.filter(a => !a.isAdult);
+  } else if (adultFilterMode === 'only') {
+    filtered = filtered.filter(a => a.isAdult);
+  }
+
   if (sortMode === 'alpha') {
     filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
   } else {
     filtered = [...filtered].sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
   }
 
-  // Refresh dropdown list if it's open
+  // Refresh dropdown lists if they're open
   if (filterDropdown.style.display !== 'none') renderFilterTagList(filterTagSearch.value);
+  if (threatFilterDropdown.style.display !== 'none') renderThreatFilterList();
 
   // Re-surface any unacknowledged malware flags (e.g. after an app restart)
   for (const asset of assets) {
@@ -500,6 +600,9 @@ async function loadLibrary(filter = '') {
     // the underlying scan result is still visible and reachable), they just
     // don't get the attention-grabbing card border/highlight anymore.
     if (isConcerning && !asset.scanMarkedSafe) card.classList.add('asset-card--flagged', `asset-card--flagged-${asset.scanStatus}`);
+    // High/Critical stay grayed out until the user explicitly marks the asset
+    // safe or unsafe (both set scanAcknowledged) — Close alone doesn't count.
+    if (['critical', 'high'].includes(asset.scanStatus) && !asset.scanAcknowledged) card.classList.add('asset-card--grayed');
     if (asset.id) card.dataset.assetId = asset.id;
     card.title = asset.originUrl || '';
 
@@ -550,8 +653,12 @@ async function loadLibrary(filter = '') {
     const MAX_TAGS = 3;
     const visibleTags = tags.slice(0, MAX_TAGS);
     const extraCount = tags.length - MAX_TAGS;
-    const tagHtml = visibleTags.length
+    const adultPillHtml = asset.isAdult
+      ? `<span class="tag-pill tag-pill--adult" title="Adult content (R-18)">🔞</span>`
+      : '';
+    const tagHtml = (visibleTags.length || adultPillHtml)
       ? `<div class="card-tags">
+          ${adultPillHtml}
           ${visibleTags.map(t => `<span class="tag-pill tag-pill--card" data-tag="${escHtml(t)}">${escHtml(t)}</span>`).join('')}
           ${extraCount > 0 ? `<span class="tag-pill tag-pill--more">+${extraCount}</span>` : ''}
          </div>`
@@ -653,6 +760,7 @@ async function loadLibrary(filter = '') {
             }},
         ].filter(Boolean));
       } else {
+        const hasUnityPackage = (asset.files || []).some(f => ['.unitypackage', '.zip', '.rar', '.7z'].some(ext => f.toLowerCase().endsWith(ext)));
         showCtxMenu(e.clientX, e.clientY, [
           { label: '✏️  Edit', action: () => window.api.openEditModal({ ...asset, tags: asset.tags || [] }) },
           { label: '🙈  Hide', action: async () => {
@@ -661,13 +769,14 @@ async function loadLibrary(filter = '') {
             }},
           'separator',
           { label: '🛡️  Scan for Malware', action: () => scanAssetsForMalware([asset.id]) },
+          hasUnityPackage ? { label: '🎮  Add to project', action: () => importAssetToUnity(asset) } : null,
           'separator',
           { label: '🗑  Delete', danger: true, action: async () => {
               if (!confirm(`Delete "${asset.name}" and all its files? This cannot be undone.`)) return;
               await window.api.deleteAsset(asset.id);
               loadLibrary(searchInput.value);
             }},
-        ]);
+        ].filter(Boolean));
       }
     });
 
@@ -774,7 +883,13 @@ window.api.onDownloadProgress(({ itemId, percent, done }) => {
 });
 
 // ── Malware scanning UI ──────────────────────────────────────────────────────
-const malwareBanners = document.getElementById('malware-banners');
+// All scan results are shown as a modal window (no banners) — what's
+// available in it depends on severity per the scoring table below:
+//   Clean (0-30)     — auto-saved, no action required, never auto-popped
+//   Low (31-60)      — saved with an audit note, no action required, never auto-popped
+//   Medium (61-100)  — manual review recommended, auto-pops a window
+//   High (101-150)   — mandatory manual review, auto-pops a window, card grayed out until acted on
+//   Critical (151+)  — must be marked unsafe, auto-pops a window, card grayed out until acted on
 const malwareModal = document.getElementById('malware-modal');
 const malwareModalOverlay = document.getElementById('malware-modal-overlay');
 const malwareModalTitle = document.getElementById('malware-modal-title');
@@ -786,16 +901,16 @@ const malwareModalClose = document.getElementById('malware-modal-close');
 const malwareModalFlag = document.getElementById('malware-modal-flag');
 const malwareModalSafe = document.getElementById('malware-modal-safe');
 
-let criticalQueue = [];
-let currentCritical = null; // the scan result currently shown in the modal (auto-critical or a manual "view details" click)
-const shownScanBanners = new Set(); // assetIds that already have a banner rendered this session
+let scanAlertQueue = [];
+let currentScanAlert = null; // the scan result currently shown in the modal (auto-surfaced or a manual "view details" click)
+const autoSurfacedThisSession = new Set(); // assetIds already auto-popped this session — avoids re-popping on every loadLibrary() call
 
 const MODAL_SEVERITY_COPY = {
-  critical: { title: '⚠ Possible Malware Detected', desc: 'This asset was flagged as <strong>Critical</strong> severity by the vrchat-scanner antimalware check. Review the scan output before opening it in Unity.' },
-  high:     { title: '⚠ Suspicious Asset',           desc: 'This asset was flagged as <strong>High</strong> severity by the vrchat-scanner antimalware check. Review the scan output before opening it in Unity.' },
-  medium:   { title: '⚠ Scan Notice',                 desc: 'This asset was flagged as <strong>Medium</strong> severity by the vrchat-scanner antimalware check.' },
-  low:      { title: 'Scan Details',                  desc: 'This asset was flagged as <strong>Low</strong> severity — no action needed.' },
-  clean:    { title: 'Scan Details',                  desc: 'This asset passed the vrchat-scanner antimalware check.' },
+  critical: { title: '⚠ Mark as Unsafe Required',  desc: 'This asset scored <strong>Critical</strong> (151+) — the antimalware check found strong evidence of compromise. It must be marked unsafe; the card stays grayed out until you do.' },
+  high:     { title: '⚠ Mandatory Manual Review',  desc: 'This asset scored <strong>High</strong> (101–150) severity. Review the findings below — the card stays grayed out until you mark it safe or unsafe.' },
+  medium:   { title: '⚠ Manual Review Recommended', desc: 'This asset scored <strong>Medium</strong> (61–100) severity. Review is recommended but not required.' },
+  low:      { title: 'Scan Details',                desc: 'This asset scored <strong>Low</strong> (31–60) severity — saved with an audit note, no action required.' },
+  clean:    { title: 'Scan Details',                desc: 'This asset scored <strong>Clean</strong> (0–30) — auto-saved, no action required.' },
 };
 
 // The scanner's raw stdout is JSON meant for machines. Turn it into a short,
@@ -841,7 +956,7 @@ function formatScanSummaryText(info) {
 // Critical finding shouldn't be one click away from being waved off.
 
 function renderScanModal(info) {
-  currentCritical = info;
+  currentScanAlert = info;
   const copy = MODAL_SEVERITY_COPY[info.severity] || { title: 'Scan Details', desc: `Malware scan result: <strong>${SEVERITY_LABELS[info.severity] || info.severity}</strong>.` };
   malwareModal.className = `malware-modal malware-modal--${info.severity || 'unknown'}`;
   malwareModalTitle.textContent = copy.title;
@@ -853,84 +968,49 @@ function renderScanModal(info) {
   malwareModalOverlay.style.display = 'flex';
 }
 
-// Advances the queue of automatically-surfaced Critical alerts (shown one at
-// a time on flag/refresh). Also doubles as "close" for the modal in general —
-// if nothing else is queued it just hides the overlay.
-function advanceCriticalQueue() {
-  const next = criticalQueue.shift() || null;
-  if (!next) { currentCritical = null; malwareModalOverlay.style.display = 'none'; return; }
+// Advances the queue of automatically-surfaced Medium/High/Critical alerts
+// (shown one window at a time). Also doubles as "close" for the modal in
+// general — if nothing else is queued it just hides the overlay.
+function advanceScanAlertQueue() {
+  const next = scanAlertQueue.shift() || null;
+  if (!next) { currentScanAlert = null; malwareModalOverlay.style.display = 'none'; return; }
   renderScanModal(next);
 }
 
-// Opens the details modal on demand (e.g. clicking the scan badge on a card),
-// regardless of severity and independent of the auto-critical queue above.
+// Opens the details modal on demand (e.g. clicking the scan badge/dot on a
+// card), for any severity, independent of the auto-surfaced queue above.
 function openScanDetailsModal(info) {
   renderScanModal(info);
 }
 
-function renderScanBanner(info) {
-  if (shownScanBanners.has(info.assetId)) return;
-  shownScanBanners.add(info.assetId);
-  const isDanger = info.severity === 'high';
-  const el = document.createElement('div');
-  el.className = `scan-banner ${isDanger ? 'scan-banner--danger' : 'scan-banner--warning'}`;
-  el.dataset.assetId = info.assetId;
-  const findingsCount = Array.isArray(info.findings) ? info.findings.length : 0;
-  const findingsNote = findingsCount ? ` ${findingsCount} issue${findingsCount === 1 ? '' : 's'} found.` : '';
-  const desc = isDanger
-    ? `"${escHtml(info.name)}" was flagged <strong>High</strong> severity.${findingsNote}`
-    : `"${escHtml(info.name)}" seems suspicious (Medium severity).${findingsNote}`;
-  el.innerHTML = `
-    <span class="scan-banner-text">⚠ ${desc}</span>
-    <div class="scan-banner-actions">
-      <button class="btn-ghost scan-banner-copy" style="font-size:11px;padding:3px 10px;">⎘ Copy Output</button>
-      <button class="btn-ghost scan-banner-flag" style="font-size:11px;padding:3px 10px;">Mark as Unsafe</button>
-      <button class="btn-primary scan-banner-safe" style="font-size:11px;padding:3px 10px;">✔ Mark as Safe</button>
-      <button class="scan-banner-close" title="Close — take no action">✕</button>
-    </div>`;
-  el.querySelector('.scan-banner-copy').addEventListener('click', () => window.api.copyToClipboard(info.output || ''));
-  const dismiss = async () => { await window.api.malwareScanAcknowledge(info.assetId); el.remove(); shownScanBanners.delete(info.assetId); };
-  el.querySelector('.scan-banner-close').addEventListener('click', dismiss);
-  el.querySelector('.scan-banner-flag').addEventListener('click', async () => {
-    await window.api.malwareMarkUnsafe(info.assetId);
-    el.remove();
-    shownScanBanners.delete(info.assetId);
-    loadLibrary(searchInput.value);
-  });
-  el.querySelector('.scan-banner-safe').addEventListener('click', async () => {
-    await window.api.malwareMarkSafe(info.assetId);
-    el.remove();
-    shownScanBanners.delete(info.assetId);
-    loadLibrary(searchInput.value);
-  });
-  malwareBanners.appendChild(el);
-}
-
+// Clean/Low results need no attention (per the scoring table) so they never
+// auto-pop a window — only Medium/High/Critical do, one at a time, and only
+// once per asset per session so re-rendering the library (search, sort,
+// filter…) doesn't keep reopening a window the user already closed.
 function showMalwareAlert(info) {
-  if (info.severity === 'critical') {
-    criticalQueue = criticalQueue.filter(i => i.assetId !== info.assetId);
-    criticalQueue.push(info);
-    if (!currentCritical) advanceCriticalQueue();
-    return;
-  }
-  renderScanBanner(info);
+  if (!['critical', 'high', 'medium'].includes(info.severity)) return;
+  if (autoSurfacedThisSession.has(info.assetId)) return;
+  autoSurfacedThisSession.add(info.assetId);
+  scanAlertQueue = scanAlertQueue.filter(i => i.assetId !== info.assetId);
+  scanAlertQueue.push(info);
+  if (!currentScanAlert) advanceScanAlertQueue();
 }
 
-malwareModalCopy.addEventListener('click', () => window.api.copyToClipboard(currentCritical ? currentCritical.output || '' : ''));
-malwareModalClose.addEventListener('click', () => advanceCriticalQueue());
+malwareModalCopy.addEventListener('click', () => window.api.copyToClipboard(currentScanAlert ? currentScanAlert.output || '' : ''));
+malwareModalClose.addEventListener('click', () => advanceScanAlertQueue());
 malwareModalFlag.addEventListener('click', async () => {
-  if (currentCritical) {
-    await window.api.malwareMarkUnsafe(currentCritical.assetId);
+  if (currentScanAlert) {
+    await window.api.malwareMarkUnsafe(currentScanAlert.assetId);
     loadLibrary(searchInput.value);
   }
-  advanceCriticalQueue();
+  advanceScanAlertQueue();
 });
 malwareModalSafe.addEventListener('click', async () => {
-  if (currentCritical) {
-    await window.api.malwareMarkSafe(currentCritical.assetId);
+  if (currentScanAlert) {
+    await window.api.malwareMarkSafe(currentScanAlert.assetId);
     loadLibrary(searchInput.value);
   }
-  advanceCriticalQueue();
+  advanceScanAlertQueue();
 });
 
 window.api.onMalwareScanFlagged(info => showMalwareAlert(info));
@@ -942,6 +1022,101 @@ const SCAN_STATUS_MESSAGES = {
   'disabled': 'Malware scanning is turned off in Settings.',
   'error': 'Could not start the scan — the asset files may be missing.',
 };
+
+const IMPORT_UNITY_ERROR_MESSAGES = {
+  'no-project': 'No open Unity project detected. Install the companion package (Settings → Unity Import) and make sure the project is open.',
+  'invalid-project': "That Unity project doesn't look valid anymore (missing Assets/ProjectSettings).",
+  'asset-not-found': 'Could not find this asset\'s files on disk.',
+  'no-package': 'This asset has no .unitypackage file to import.',
+  'no-files-selected': 'Select at least one file to import.',
+};
+
+async function showUnityImportDialog(asset, projects) {
+  const overlay = document.createElement('div');
+  overlay.className = 'unity-import-overlay';
+  overlay.innerHTML = '<div class="unity-import-dialog unity-import-loading" role="dialog" aria-modal="true" aria-busy="true"><div class="unity-import-spinner" aria-hidden="true"></div><div class="modal-title">Preparing Unity import</div><p class="unity-import-help">Scanning archive contents. Large files may take a moment…</p></div>';
+  document.body.appendChild(overlay);
+  const result = await window.api.getUnityImportEntries(asset.id);
+  if (!result.ok) { overlay.remove(); alert(IMPORT_UNITY_ERROR_MESSAGES[result.error] || result.error); return; }
+  const entries = result.entries || [];
+  if (!entries.length) { overlay.remove(); alert('No importable files were found in this asset.'); return; }
+
+  overlay.innerHTML = `<div class="unity-import-dialog" role="dialog" aria-modal="true">
+    <div class="modal-title">Add to Unity project</div>
+    <p class="unity-import-help">Select the files to copy. Thumbnail and metadata files are hidden.</p>
+    ${projects.length > 1 ? '<label class="unity-project-label">Target project<select id="unity-project-select"></select></label>' : `<div class="unity-project-name">Target project: ${escHtml(projects[0].projectName)}</div>`}
+    <div class="unity-import-toolbar"><label class="unity-select-all"><input type="checkbox" id="unity-select-all"> <span>Select all visible files</span></label><input type="search" id="unity-import-search" placeholder="Search files…" autocomplete="off"></div>
+    <div class="unity-import-files" id="unity-import-files"></div>
+    <div class="modal-actions"><button class="btn-ghost" id="unity-import-cancel">Cancel</button><button class="btn-primary" id="unity-import-confirm">Add selected files</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const projectSelect = overlay.querySelector('#unity-project-select');
+  if (projectSelect) projects.forEach(project => { const option = document.createElement('option'); option.value = project.projectPath; option.textContent = project.projectName; projectSelect.appendChild(option); });
+  const files = overlay.querySelector('#unity-import-files');
+  entries.forEach(entry => {
+    const row = document.createElement('label');
+    row.className = 'unity-import-file';
+    row.dataset.searchText = `${entry.archive} ${entry.path}`.toLowerCase();
+    const entryLabel = entry.unityPackage
+      ? (entry.path || entry.archive).split('/').pop()
+      : (entry.path && entry.path !== entry.archive ? `${entry.archive} / ${entry.path}` : entry.archive);
+    row.innerHTML = `<input type="checkbox" checked data-key="${escHtml(entry.key)}"><span>${escHtml(entryLabel)}</span><small>${entry.unityPackage ? 'Unity package' : `${Math.ceil(entry.size / 1024)} KB`}</small>`;
+    files.appendChild(row);
+  });
+  const selectAll = overlay.querySelector('#unity-select-all');
+  const searchInput = overlay.querySelector('#unity-import-search');
+  const visibleRows = () => [...files.querySelectorAll('.unity-import-file')].filter(row => row.style.display !== 'none');
+  const updateSelectAll = () => {
+    const rows = visibleRows();
+    const checked = rows.filter(row => row.querySelector('input').checked).length;
+    selectAll.checked = rows.length > 0 && checked === rows.length;
+    selectAll.indeterminate = checked > 0 && checked < rows.length;
+  };
+  selectAll.addEventListener('change', () => {
+    visibleRows().forEach(row => { row.querySelector('input').checked = selectAll.checked; });
+    updateSelectAll();
+  });
+  files.addEventListener('change', event => {
+    if (event.target.matches('input[type="checkbox"]')) updateSelectAll();
+  });
+  searchInput.addEventListener('input', () => {
+    const query = searchInput.value.trim().toLowerCase();
+    files.querySelectorAll('.unity-import-file').forEach(row => {
+      row.style.display = !query || row.dataset.searchText.includes(query) ? '' : 'none';
+    });
+    updateSelectAll();
+  });
+  updateSelectAll();
+  const close = () => overlay.remove();
+  overlay.querySelector('#unity-import-cancel').addEventListener('click', close);
+  overlay.querySelector('#unity-import-confirm').addEventListener('click', async () => {
+    const selected = [...files.querySelectorAll('input:checked')].map(input => entries.find(entry => entry.key === input.dataset.key)).filter(Boolean);
+    const projectPath = projectSelect ? projectSelect.value : projects[0].projectPath;
+    const confirmButton = overlay.querySelector('#unity-import-confirm');
+    confirmButton.disabled = true;
+    overlay.classList.add('unity-import-is-busy');
+    overlay.querySelector('.unity-import-dialog').setAttribute('aria-busy', 'true');
+    overlay.querySelector('.unity-import-help').textContent = 'Copying files and waiting for Unity to import the package…';
+    const spinner = document.createElement('div');
+    spinner.className = 'unity-import-spinner unity-import-spinner--inline';
+    confirmButton.before(spinner);
+    const importResult = await window.api.importToUnity(asset.id, projectPath, selected);
+    close();
+    await window.api.focusUnityProject(projectPath);
+    if (!importResult.ok) alert(IMPORT_UNITY_ERROR_MESSAGES[importResult.error] || `Could not import: ${importResult.error}`);
+  });
+}
+
+async function importAssetToUnity(asset) {
+  const projects = await window.api.getUnityProjects();
+
+  if (projects.length === 0) {
+    alert(IMPORT_UNITY_ERROR_MESSAGES['no-project']);
+    return;
+  }
+
+  await showUnityImportDialog(asset, projects);
+}
 
 async function scanAssetsForMalware(assetIds) {
   const results = await window.api.malwareScanNow(assetIds);
@@ -983,15 +1158,16 @@ tabBtns.forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => {
       p.style.display = p.id === 'tab-' + tabId ? '' : 'none';
     });
-    // Show/hide library-only topbar controls
+    // Show/hide library-only header controls
     const isLibrary = tabId === 'library';
-    document.querySelectorAll('.library-only, #library-search-wrap').forEach(el => {
+    document.querySelectorAll('.library-only').forEach(el => {
       el.style.display = isLibrary ? '' : 'none';
     });
   });
 });
 
 updateSortButton();
+updateAdultFilterButton();
 applyViewMode();
 initPagination();
 loadLibrary();

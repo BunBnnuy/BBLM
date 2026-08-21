@@ -363,6 +363,7 @@ class DownloadQueue {
     let assetName = fileName.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
     let tags = [];
     let selectedImageUrl = null;
+    let isAdult = false;
 
     if (originUrl) {
       try {
@@ -370,6 +371,7 @@ class DownloadQueue {
         if (scraped.name)   assetName        = scraped.name;
         if (scraped.tags?.length)  tags        = scraped.tags;
         if (scraped.images?.length) selectedImageUrl = scraped.images[0].url;
+        isAdult = !!scraped.isAdult;
       } catch (err) {
         console.warn('[queue] scrape failed:', err.message);
       }
@@ -377,7 +379,7 @@ class DownloadQueue {
 
     if (item.cancelled) return;
 
-    const shell = await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, store });
+    const shell = await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store });
     if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
 
     if (item.cancelled) {
@@ -952,19 +954,6 @@ ipcMain.handle('malware-scan-all', () => {
   return { ok: true, queued: ids.length };
 });
 
-ipcMain.handle('malware-scan-acknowledge', (event, assetId) => {
-  const rootFolder = store.get('rootFolder', '');
-  const assetDir = resolveExistingAssetDir(rootFolder, assetId);
-  const metaPath = path.join(assetDir, 'meta.json');
-  if (!fs.existsSync(metaPath)) return false;
-  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-  meta.scanAcknowledged = true;
-  writeJsonAtomic(metaPath, meta);
-  const { touchIndexEntry } = require('./src/assetManager');
-  touchIndexEntry(store, assetId, meta);
-  return true;
-});
-
 // User override for Medium/Low findings the scanner flagged but the user has
 // reviewed and judged to be a false positive. Cleared automatically the next
 // time this asset is scanned (see runMalwareScanForAsset) so a stale override
@@ -1197,9 +1186,9 @@ ipcMain.handle('wait-for-file', async (event, { fileName, downloadsFolder }) => 
   return await waitForFile(fileName, downloadsFolder);
 });
 
-ipcMain.handle('import-asset', async (event, { originUrl, filePath, selectedImageUrl, assetName, tags }) => {
+ipcMain.handle('import-asset', async (event, { originUrl, filePath, selectedImageUrl, assetName, tags, isAdult }) => {
   const { importAsset } = require('./src/assetManager');
-  const result = await importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, store });
+  const result = await importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, isAdult, store });
   runMalwareScanForAsset(result.assetId);
   return result;
 });
@@ -1214,6 +1203,116 @@ ipcMain.handle('open-asset-folder', (event, assetId) => {
   const rootFolder = store.get('rootFolder', '');
   try { shell.openPath(resolveExistingAssetDir(rootFolder, assetId)); } catch (_) { return false; }
   return true;
+});
+
+// ── Unity companion: project discovery via shared heartbeat registry ──────────
+// Any open Unity project with BBLM_Importer.cs installed writes a heartbeat
+// file here every few seconds. We treat entries seen recently as "currently
+// open" — this is how BBLM finds a target project without the user having to
+// point it at one manually every time they switch projects.
+const UNITY_REGISTRY_DIR = path.join(app.getPath('appData'), 'BBLM', 'unity-projects');
+const UNITY_HEARTBEAT_STALE_MS = 30000;
+
+function getOpenUnityProjects() {
+  let entries;
+  try { entries = fs.readdirSync(UNITY_REGISTRY_DIR); } catch { return []; }
+
+  const now = Date.now();
+  const projects = [];
+  for (const entry of entries) {
+    if (!entry.endsWith('.json')) continue;
+    try {
+      const raw = fs.readFileSync(path.join(UNITY_REGISTRY_DIR, entry), 'utf8').replace(/^﻿/, '');
+      const data = JSON.parse(raw);
+      const lastSeen = Date.parse(data.lastSeen);
+      if (!data.projectPath || !Number.isFinite(lastSeen)) continue;
+      if (now - lastSeen > UNITY_HEARTBEAT_STALE_MS) continue;
+      projects.push({ projectPath: data.projectPath, projectName: data.projectName || path.basename(data.projectPath), pid: Number.isInteger(data.pid) ? data.pid : null });
+    } catch { /* skip malformed/partially-written heartbeat files */ }
+  }
+  return projects.sort((a, b) => a.projectName.localeCompare(b.projectName));
+}
+
+ipcMain.handle('get-unity-projects', () => getOpenUnityProjects());
+
+ipcMain.handle('focus-unity-project', (event, projectPath) => {
+  const project = getOpenUnityProjects().find(item => item.projectPath === projectPath && Number.isInteger(item.pid));
+  if (!project) return { ok: false };
+  const { spawn } = require('child_process');
+  const pid = String(project.pid);
+  const script = [
+    "$signature = @'",
+    'using System; using System.Runtime.InteropServices; public static class BBLMFocus {',
+    '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); }',
+    "'@",
+    'Add-Type -TypeDefinition $signature',
+    `$p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if($p){ $shell=New-Object -ComObject WScript.Shell; for($i=0;$i -lt 10;$i++){ $shell.AppActivate($p.Id) | Out-Null; [BBLMFocus]::ShowWindowAsync($p.MainWindowHandle,9); [BBLMFocus]::SetForegroundWindow($p.MainWindowHandle); Start-Sleep -Milliseconds 100 } }`,
+  ].join('\n');
+  try { spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script], { windowsHide: true, stdio: 'ignore' }); } catch (_) { return { ok: false }; }
+  return { ok: true };
+});
+
+ipcMain.handle('get-unity-import-entries', async (event, assetId) => {
+  const rootFolder = store.get('rootFolder', '');
+  let assetDir;
+  try { assetDir = resolveExistingAssetDir(rootFolder, assetId); } catch (_) { return { ok: false, error: 'asset-not-found' }; }
+  const metaPath = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) return { ok: false, error: 'asset-not-found' };
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const archives = (meta.files || [])
+      .filter(file => ['.zip', '.rar', '.7z', '.unitypackage'].includes(path.extname(file).toLowerCase()))
+      .map(file => resolveAssetFile(rootFolder, assetId, file));
+    if (!archives.length) return { ok: false, error: 'no-package' };
+    const { listUnityImportEntries } = require('./src/unityImport');
+    return { ok: true, entries: await listUnityImportEntries(archives) };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('import-to-unity', async (event, { assetId, projectPath, selections }) => {
+  const rootFolder = store.get('rootFolder', '');
+  if (!projectPath) return { ok: false, error: 'no-project' };
+  if (!fs.existsSync(path.join(projectPath, 'Assets')) ||
+      !fs.existsSync(path.join(projectPath, 'ProjectSettings'))) {
+    return { ok: false, error: 'invalid-project' };
+  }
+
+  let assetDir;
+  try { assetDir = resolveExistingAssetDir(rootFolder, assetId); } catch (_) { return { ok: false, error: 'asset-not-found' }; }
+  const metaPath = path.join(assetDir, 'meta.json');
+  if (!fs.existsSync(metaPath)) return { ok: false, error: 'asset-not-found' };
+
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  const archives = (meta.files || [])
+    .filter(file => ['.zip', '.rar', '.7z', '.unitypackage'].includes(path.extname(file).toLowerCase()))
+    .map(file => resolveAssetFile(rootFolder, assetId, file));
+  if (!archives.length) return { ok: false, error: 'no-package' };
+
+  try {
+    const { listUnityImportEntries, extractSelectedUnityFiles } = require('./src/unityImport');
+    const available = await listUnityImportEntries(archives);
+    const requested = Array.isArray(selections) ? selections : available;
+    const allowed = new Map(available.map(entry => [entry.key, entry]));
+    const selected = requested.map(item => allowed.get(item.key)).filter(Boolean);
+    if (!selected.length) return { ok: false, error: 'no-files-selected' };
+    await extractSelectedUnityFiles(archives, selected, path.join(projectPath, 'Assets'), {
+      unityPackageDestination: path.join(projectPath, 'BBLM_Import'),
+    });
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('reveal-unity-companion', () => {
+  // Copy out of app.asar (not a real path on disk once packaged) to a writable folder, then reveal it.
+  const src = path.join(__dirname, 'companion', 'unity', 'BBLM_Importer.unitypackage');
+  const destDir = path.join(app.getPath('userData'), 'companion');
+  const dest = path.join(destDir, 'BBLM_Importer.unitypackage');
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(src, dest);
+  shell.showItemInFolder(dest);
 });
 
 ipcMain.handle('open-external', (event, url) => {
@@ -1485,6 +1584,7 @@ ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl })
   let assetName = path.basename(archivePath, path.extname(archivePath)).replace(/[-_]+/g, ' ').trim();
   let tags = [];
   let selectedImageUrl = null;
+  let isAdult = false;
 
   if (originUrl) {
     try {
@@ -1492,13 +1592,14 @@ ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl })
       if (scraped.name)           assetName        = scraped.name;
       if (scraped.tags?.length)   tags             = scraped.tags;
       if (scraped.images?.length) selectedImageUrl = scraped.images[0].url;
+      isAdult = !!scraped.isAdult;
     } catch (err) {
       console.warn('[scanner-import] scrape failed:', err.message);
     }
   }
 
   try {
-    const result = await importAsset({ originUrl, filePath: archivePath, selectedImageUrl, assetName, tags, store });
+    const result = await importAsset({ originUrl, filePath: archivePath, selectedImageUrl, assetName, tags, isAdult, store });
     if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: result.assetId });
     runMalwareScanForAsset(result.assetId);
     return { ok: true, assetId: result.assetId, assetName: result.meta.name };

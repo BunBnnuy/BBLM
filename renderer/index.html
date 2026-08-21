@@ -15,20 +15,33 @@
       <button class="tab-btn" data-tab="free-items">Booth Free Items</button>
       <button class="tab-btn" data-tab="scanner">Library Scanner</button>
     </div>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
+  </div>
+
+  <div class="lib-header library-only" id="library-header">
     <div class="search-wrap" id="library-search-wrap">
       <input type="search" id="search" placeholder="Search assets…" />
-      <button class="btn-ghost btn-filter" id="btn-filter" title="Filter by tag">⌖ Tags</button>
-      <div id="filter-dropdown" class="filter-dropdown" style="display:none;">
-        <input type="search" id="filter-tag-search" placeholder="Search tags…" autocomplete="off" />
-        <div id="filter-tag-list" class="filter-tag-list"></div>
+      <div class="filter-group">
+        <button class="btn-ghost btn-filter" id="btn-filter" title="Filter by tag">⌖ Tags</button>
+        <div id="filter-dropdown" class="filter-dropdown" style="display:none;">
+          <input type="search" id="filter-tag-search" placeholder="Search tags…" autocomplete="off" />
+          <div id="filter-tag-list" class="filter-tag-list"></div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <button class="btn-ghost btn-filter" id="btn-threat-filter" title="Filter by threat level">⚠ Threat</button>
+        <div id="threat-filter-dropdown" class="filter-dropdown" style="display:none;">
+          <div id="threat-filter-list" class="filter-tag-list"></div>
+        </div>
       </div>
     </div>
-    <div class="spacer"></div>
-    <span id="asset-count" class="asset-count library-only" title=""></span>
-    <button class="btn-ghost library-only" id="btn-sort" title="Sort order">⇅ Date</button>
-    <button class="btn-ghost library-only" id="btn-view" title="View mode">⊞ Grid</button>
-    <button class="btn-primary library-only" id="btn-add-asset" title="Import a new asset">+ Add Asset</button>
-    <button class="btn-ghost" id="btn-settings">⚙ Settings</button>
+    <div class="lib-header-actions">
+      <button class="btn-ghost" id="btn-adult-filter" title="Adult content filter">🔞 Show All</button>
+      <button class="btn-ghost" id="btn-sort" title="Sort order">⇅ Date</button>
+      <button class="btn-ghost" id="btn-view" title="View mode">⊞ Grid</button>
+      <button class="btn-primary" id="btn-add-asset" title="Import a new asset">+ Add Asset</button>
+    </div>
   </div>
 
   <div id="release-notes-overlay" class="release-notes-overlay" style="display:none;">
@@ -44,8 +57,6 @@
 
   <!-- Library tab -->
   <div id="tab-library" class="tab-panel active">
-    <div id="malware-banners"></div>
-
     <div id="tag-filter-bar" style="display:none;">
       <span class="tag-filter-label">Filter:</span>
       <div id="tag-filter-chips"></div>

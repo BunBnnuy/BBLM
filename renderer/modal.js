@@ -19,6 +19,7 @@ const fileField    = document.getElementById('file-field');
 const tagPills     = document.getElementById('tag-pills');
 const tagInput     = document.getElementById('tag-input');
 const tagSuggestions = document.getElementById('tag-suggestions');
+const isAdultCheckbox = document.getElementById('is-adult');
 
 // ── Tag editor ──────────────────────────────────────────────────────────────
 function renderTags() {
@@ -168,6 +169,7 @@ window.api.onImportData((data) => {
     if (data.originUrl) originInput.value = data.originUrl;
     if (data.name)      nameInput.value   = data.name;
     setTags(data.tags || []);
+    isAdultCheckbox.checked = !!data.isAdult;
 
     if (data.thumbnailPath) {
       imageSection.style.display = 'block';
@@ -240,6 +242,8 @@ async function autoFetch(url) {
     result.tags.forEach(t => addTag(t));
   }
 
+  if (result.isAdult) isAdultCheckbox.checked = true;
+
   if (!result.images.length) {
     clearStatus();
     return;
@@ -281,13 +285,14 @@ btnImport.addEventListener('click', async () => {
   const originUrl = originInput.value.trim();
   const assetName = nameInput.value.trim();
   const tags      = currentTags;
+  const isAdult   = isAdultCheckbox.checked;
 
   if (editMode) {
     if (!assetName) return setStatus('Asset name is required.', 'error');
     setStatus('⏳ Saving…', 'info');
     btnImport.disabled = true;
     try {
-      const result = await window.api.updateAsset({ assetId: editAssetId, name: assetName, originUrl, selectedImageUrl, tags });
+      const result = await window.api.updateAsset({ assetId: editAssetId, name: assetName, originUrl, selectedImageUrl, tags, isAdult });
       setStatus('✔ Saved "' + result.meta.name + '"', 'success');
       window.api.refreshLibrary(result.assetId);
       setTimeout(() => window.api.closeModal(), 1200);
@@ -304,7 +309,7 @@ btnImport.addEventListener('click', async () => {
       if (!originUrl) return setStatus('Origin URL is required.', 'error');
       setStatus('⏳ Importing…', 'info');
       try {
-        const result = await window.api.importAsset({ originUrl, filePath: resolvedFilePaths[0], selectedImageUrl, assetName: assetName || null, tags });
+        const result = await window.api.importAsset({ originUrl, filePath: resolvedFilePaths[0], selectedImageUrl, assetName: assetName || null, tags, isAdult });
         setStatus('✔ Imported as "' + result.meta.name + '" (ID: ' + result.assetId + ')', 'success');
         window.api.refreshLibrary(result.assetId);
         setTimeout(() => window.api.closeModal(), 1500);
@@ -337,7 +342,7 @@ btnImport.addEventListener('click', async () => {
             if (result && result.error) throw new Error(result.error);
             window.api.refreshLibrary(sharedAssetId);
           } else {
-            const result = await window.api.importAsset({ originUrl: originUrl || '', filePath: fp, selectedImageUrl, assetName: name, tags });
+            const result = await window.api.importAsset({ originUrl: originUrl || '', filePath: fp, selectedImageUrl, assetName: name, tags, isAdult });
             sharedAssetId = result.assetId;
             window.api.refreshLibrary(result.assetId);
           }

@@ -6,6 +6,21 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.0] — 2026-08-21
+
+### Added
+
+- **Malware scanning** — imported `.unitypackage`, `.zip`, `.rar`, and `.7z` files are scanned in the background with the [vrchat-scanner](https://github.com/vicentefelipechile/vrchat-scanner) CLI, which is downloaded and kept up to date automatically. Flagged assets show a warning modal with the scan output, and can be marked safe or unsafe. A **⚠ Threat** filter lets you browse the library by scan result. Assets already in your library are swept one at a time whenever the computer has been idle for a few minutes, and a **Scan All Assets Now** button in Settings runs the whole library on demand. Scanning (and the idle backlog sweep) can each be turned off in Settings.
+- **Unity project import** — right-click any asset with an archive or `.unitypackage` file and choose **Add to project** to copy selected files straight into an open Unity project, including files nested inside archives. A companion Editor script (`companion/unity/BBLM_Importer.unitypackage`, installed once per project via Settings → Unity Import) lets BB's LibMan detect which Unity projects are currently open and drop packages in for Unity to import automatically.
+- **Release notes popup** — shows a summary of what changed after an auto-update, pulled straight from this changelog. Revisit it anytime from Settings → About → **Show Release Notes**.
+- **Adult content flag and filter** — items marked adult by the Booth API are tagged as such; a **🔞 Show All** toggle in the library header hides or reveals them.
+
+### Changed
+
+- The Library, Booth Free Items, and Library Scanner tabs now share one header bar, with search and tag/threat filters grouped together above the asset grid.
+
+---
+
 ## [1.3.0] — 2026-08-20
 
 ### Added
@@ -94,6 +109,7 @@ Bug-fix release focused on the import pipeline.
 
 Initial release.
 
+[1.4.0]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.4.0
 [1.3.0]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.3.0
 [1.2.2]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.2
 [1.2.1]: https://github.com/BunBnnuy/BBLM/releases/tag/v1.2.1

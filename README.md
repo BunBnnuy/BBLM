@@ -73,6 +73,32 @@ A utility tab for discovering assets already on your disk that haven't been impo
 - **Progress bar** — real-time scan progress shown while scanning large folder trees
 - **Cancellable** — stop a long scan at any time
 
+### 🛡 Malware Scanning
+Imported files are checked in the background with the [vrchat-scanner](https://github.com/vicentefelipechile/vrchat-scanner) CLI, which BBLM downloads and keeps up to date automatically:
+
+- **Automatic scan on import** — `.unitypackage`, `.zip`, `.rar`, and `.7z` files are scanned as soon as an import finishes
+- **Flagged asset modal** — a warning popup with the scan output appears for anything above a clean result, with **Mark as Safe** / **Mark as Unsafe** actions
+- **Threat filter** — click **⚠ Threat** in the library header to filter by scan result
+- **Idle backlog sweep** — assets already in your library that haven't been scanned are checked one at a time, only after the computer has been idle for a few minutes
+- **Scan All Assets Now** — trigger a full-library scan on demand from Settings
+- Auto-scan-on-import and the idle sweep can each be disabled independently in Settings
+
+### 🎮 Unity Project Import
+Copy files straight from an imported asset into an open Unity project, including files nested inside archives:
+
+- Install the companion package (`companion/unity/BBLM_Importer.unitypackage`) into a Unity project once — BBLM then detects that project is open automatically
+- Right-click any asset with an archive or `.unitypackage` file and choose **Add to project**
+- Pick which files to copy (with search and select-all) and, if more than one project is open, which one to target
+- `.unitypackage` files are dropped into the target project for Unity to import on its own; other files are copied directly into the project
+
+### 🔞 Adult Content Filter
+- Items marked adult by the Booth API are flagged automatically
+- Toggle **🔞 Show All** in the library header to hide or reveal them
+
+### 📰 Release Notes
+- After an automatic update, a popup summarizes what changed in the new version, pulled from the changelog
+- Revisit it anytime from **Settings → About → Show Release Notes**
+
 ### 🔗 URL Protocol Handlers
 Register BB's LibMan as the default handler for custom URL schemes, enabling fully automatic one-click importing from external apps:
 
@@ -229,14 +255,20 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 │   ├── fileWatcher.js       # One-shot file wait (manual import)
 │   ├── httpClient.js        # Shared HTTPS client (DNS-pinned, redirect/size/time limits)
 │   ├── logger.js            # Redacted structured logging
+│   ├── malwareScan.js       # Forked-worker scan runner for imported assets
+│   ├── malwareScanWorker.js # Sandboxed vrchat-scanner CLI invocation
+│   ├── malwareScanner.js    # Downloads/updates the vrchat-scanner binary
 │   ├── protocol.js          # Strict parsers for custom URL schemes
+│   ├── releaseNotes.js      # Parses CHANGELOG.md for the release notes popup
 │   ├── scraper.js           # Booth JSON API + HTML scraper (title, images, tags)
+│   ├── unityImport.js       # Archive-aware file picker/copier for Unity import
 │   └── security/            # Path containment and outbound network policy
 ├── renderer/
 │   ├── index.html / app.js          # Main library view + pagination + tag filter
 │   ├── freeItems.js                 # Booth Free Items tab logic
 │   ├── scanner.js                   # Library Scanner tab logic
 │   ├── modal.html / modal.js        # Import / edit dialog with tag editor
+│   ├── releaseNotes.js              # Release notes popup rendering
 │   ├── settings.html / settings.js  # Settings page
 │   └── styles.css
 ├── assets/
@@ -244,7 +276,11 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 │   └── booth.png
 ├── test/                    # node --test regression suite
 └── companion/
-    └── RSLimMan.user.js     # Tampermonkey companion script (optional)
+    ├── RSLimMan.user.js               # Tampermonkey companion script (optional)
+    └── unity/
+        ├── BBLM_Importer.cs           # Unity Editor script (project detection + auto-import)
+        ├── BBLM_Importer.unitypackage # Prebuilt package to import into a Unity project
+        └── build-unitypackage.js      # Regenerates the .unitypackage from the .cs (dev tool)
 ```
 
 ---

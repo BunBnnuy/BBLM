@@ -34,6 +34,41 @@ function removeIndexEntry(store, assetId) {
   try { writeIndexFile(rootFolder, Object.fromEntries(cache.entries)); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
 }
 
+function discardIncompleteDownload({ assetId, store }) {
+  const rootFolder = store.get('rootFolder', '');
+  let assetDir;
+  try { assetDir = resolveExistingAssetDir(rootFolder, assetId); } catch { return false; }
+
+  const metaPath = path.join(assetDir, 'meta.json');
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { return false; }
+
+  // Only remove a shell created by createAssetShell(). Never remove a card
+  // that has a completed file or an unrecognized user file in its folder.
+  if (meta.downloadStatus !== 'pending' || (meta.files || []).length > 0) return false;
+  const shellFiles = new Set(['meta.json', 'thumbnail.png', 'thumbnail_raw.tmp']);
+  const contents = fs.readdirSync(assetDir, { withFileTypes: true });
+  if (contents.some(entry => !entry.isFile() || !shellFiles.has(entry.name))) return false;
+
+  fs.rmSync(assetDir, { recursive: true, force: true });
+  const hadCache = cache && cache.rootFolder === rootFolder;
+  removeIndexEntry(store, assetId);
+  if (!hadCache) reconcileIndex(store);
+  return true;
+}
+
+function cleanupIncompleteDownloads(store) {
+  const rootFolder = store.get('rootFolder', '');
+  if (!rootFolder || !fs.existsSync(rootFolder)) return 0;
+
+  let removed = 0;
+  for (const entry of fs.readdirSync(rootFolder, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (discardIncompleteDownload({ assetId: entry.name, store })) removed++;
+  }
+  return removed;
+}
+
 function reconcileIndex(store) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder || !fs.existsSync(rootFolder)) return null;
@@ -101,6 +136,37 @@ function extractAssetId(originUrl) {
   } catch {
     return 'asset-' + Date.now();
   }
+}
+
+function extractBoothItemId(originUrl) {
+  try {
+    const url = new URL(originUrl);
+    const host = url.hostname.toLowerCase();
+    if (host !== 'booth.pm' && !host.endsWith('.booth.pm')) return null;
+    const match = url.pathname.match(/\/items\/(\d+)(?:\/|$)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function findExistingBoothAsset({ originUrl, itemId, store }) {
+  const boothItemId = String(itemId || extractBoothItemId(originUrl) || '');
+  if (!boothItemId) return null;
+
+  const candidates = getAssets(store).filter(asset =>
+    extractBoothItemId(asset.originUrl) === boothItemId
+  );
+  candidates.sort((a, b) => {
+    const aComplete = a.downloadStatus !== 'pending' && (a.files || []).length > 0 ? 1 : 0;
+    const bComplete = b.downloadStatus !== 'pending' && (b.files || []).length > 0 ? 1 : 0;
+    if (aComplete !== bComplete) return bComplete - aComplete;
+    const aExact = a.id === boothItemId ? 1 : 0;
+    const bExact = b.id === boothItemId ? 1 : 0;
+    if (aExact !== bExact) return bExact - aExact;
+    return (b.files || []).length - (a.files || []).length;
+  });
+  return candidates[0] || null;
 }
 
 function normalizeUrl(url) {
@@ -315,12 +381,22 @@ function finalizeAssetDownload({ assetId, filePath, store }) {
   const metaPath   = path.join(assetDir, 'meta.json');
   if (!fs.existsSync(metaPath)) throw new Error('Asset not found: ' + assetId);
 
-  const destFile = path.join(assetDir, sanitizeExternalFilename(path.basename(filePath)));
+  const requestedName = sanitizeExternalFilename(path.basename(filePath));
+  const extension = path.extname(requestedName);
+  const baseName = path.basename(requestedName, extension);
+  let savedName = requestedName;
+  let suffix = 2;
+  while (fs.existsSync(path.join(assetDir, savedName))) {
+    const suffixText = `-${suffix++}`;
+    savedName = sanitizeExternalFilename(`${baseName.slice(0, 180 - extension.length - suffixText.length)}${suffixText}${extension}`);
+  }
+  const destFile = path.join(assetDir, savedName);
   const sameFile = path.resolve(filePath) === path.resolve(destFile);
   if (!sameFile) fs.copyFileSync(filePath, destFile, fs.constants.COPYFILE_EXCL);
 
   const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-  meta.files = [path.basename(destFile)];
+  if (!Array.isArray(meta.files)) meta.files = [];
+  if (!meta.files.includes(savedName)) meta.files.push(savedName);
   meta.downloadStatus = 'complete';
   try {
     writeJsonAtomic(metaPath, meta);
@@ -330,10 +406,12 @@ function finalizeAssetDownload({ assetId, filePath, store }) {
     throw error;
   }
   touchIndexEntry(store, assetId, meta);
-  return { assetId, meta };
+  return { assetId, fileName: savedName, meta };
 }
 
 module.exports = {
   importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile, registerTags,
-  createAssetShell, finalizeAssetDownload, touchIndexEntry, reconcileIndex,
+  extractBoothItemId, findExistingBoothAsset,
+  createAssetShell, finalizeAssetDownload, discardIncompleteDownload, cleanupIncompleteDownloads,
+  touchIndexEntry, reconcileIndex,
 };

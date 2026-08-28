@@ -1,6 +1,6 @@
 {
   "name": "bbs-libman",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "BB's Library Manager for 3D model and game asset downloads",
   "main": "main.js",
   "scripts": {
@@ -15,6 +15,13 @@
   "build": {
     "appId": "com.bbs-libman.app",
     "productName": "BB's LibMan",
+    "files": [
+      "**/*",
+      "!booth-forum-link-extension{,/**/*}",
+      "!.claude{,/**/*}",
+      "!test{,/**/*}",
+      "!plan.md"
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"

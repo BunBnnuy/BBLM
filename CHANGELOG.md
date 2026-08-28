@@ -6,6 +6,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.1] — 2026-08-28
+
+### Fixed
+
+- **Failed BOOTH downloads created duplicate library cards.** Incomplete download shells are now removed when a download fails, stale empty shells are cleaned at startup, and repeated delivery of the same download URL is ignored while it is already queued.
+- **BOOTH variants were saved as separate `<item-id>-N` assets.** Downloads from the same BOOTH item now reuse one library card and append each variant to its file list. If two variants use the same file name, both are preserved with a numbered local suffix.
+
+---
+
 ## [1.4.0] — 2026-08-21
 
 ### Added

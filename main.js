@@ -284,6 +284,9 @@ class DownloadQueue {
   }
 
   add(job) {
+    const duplicate = [this.active, ...this.queue].find(item => item && item.dlUrl === job.dlUrl);
+    if (duplicate) return duplicate.id;
+
     const item = { ...job, id: this._nextId++, status: 'pending', percent: 0 };
     this.queue.push(item);
     this._notify();
@@ -318,6 +321,12 @@ class DownloadQueue {
       await this._run(this.active);
     } catch (err) {
       console.error('[queue] job failed:', err.message);
+      if (this.active.assetId) {
+        const { discardIncompleteDownload } = require('./src/assetManager');
+        if (discardIncompleteDownload({ assetId: this.active.assetId, store }) && mainWindow) {
+          mainWindow.webContents.send('refresh-library', {});
+        }
+      }
       this.active.status = 'error';
       this.active.error  = err.message;
       this._notify();
@@ -358,7 +367,7 @@ class DownloadQueue {
 
     // Phase 1: scrape metadata + create asset shell
     const { scrapePageMeta } = require('./src/scraper');
-    const { createAssetShell, finalizeAssetDownload } = require('./src/assetManager');
+    const { createAssetShell, finalizeAssetDownload, findExistingBoothAsset } = require('./src/assetManager');
 
     let assetName = fileName.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
     let tags = [];
@@ -379,13 +388,17 @@ class DownloadQueue {
 
     if (item.cancelled) return;
 
-    const shell = await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store });
-    if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
+    const existingAsset = findExistingBoothAsset({ originUrl, itemId, store });
+    const shell = existingAsset
+      ? { assetId: existingAsset.id, meta: existingAsset, isExisting: true }
+      : await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store });
+    item.assetId = shell.assetId;
+    if (!shell.isExisting && mainWindow) mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
 
     if (item.cancelled) {
       // Clean up shell if cancelled before download
       const { deleteAsset } = require('./src/assetManager');
-      deleteAsset({ assetId: shell.assetId, store });
+      if (!shell.isExisting) deleteAsset({ assetId: shell.assetId, store });
       return;
     }
 
@@ -499,12 +512,17 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
-    createTray();
-    createMainWindow();
     const configuredRoot = store.get('rootFolder', '');
     if (configuredRoot && fs.existsSync(configuredRoot)) {
+      try {
+        const { cleanupIncompleteDownloads } = require('./src/assetManager');
+        const removed = cleanupIncompleteDownloads(store);
+        if (removed > 0) console.log(`[startup] removed ${removed} incomplete download shell(s)`);
+      } catch (err) { console.warn('[startup] incomplete download cleanup failed:', err.message); }
       try { cleanupStaging(configuredRoot); } catch (err) { console.warn('[startup] staging cleanup failed:', err.message); }
     }
+    createTray();
+    createMainWindow();
 
     // Handle URL if app was cold-launched via a scheme (Windows passes it in argv)
     const url = process.argv.find(arg => /^(booth-library-manager|bunslm|rslimman|vroid\.closet):\/\//i.test(arg));
@@ -624,6 +642,7 @@ function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgre
           resolve();
         });
       });
+      file.on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
       res.on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
     }).on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
   });

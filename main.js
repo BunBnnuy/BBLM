@@ -14,6 +14,10 @@ const { writeJsonAtomic, cleanupStaging } = require('./src/atomicFs');
 const { ensureScannerUpdated } = require('./src/malwareScanner');
 const { scanTargets } = require('./src/malwareScan');
 const { parseReleaseNotes } = require('./src/releaseNotes');
+const { removeScannerResult } = require('./src/scannerResults');
+const { autoSelectedCandidate, extractBoothEvidence, initialOrigin, searchBooth } = require('./src/boothOriginFinder');
+const { createUpdatePromptOptions, shouldInstallNow } = require('./src/updatePrompt');
+const { createShowcaseSnapshot, publishShowcaseSnapshot } = require('./src/showcaseSnapshot');
 
 const store = new Store();
 const monitor = new DownloadsMonitor(onFileDetected);
@@ -22,7 +26,31 @@ autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.on('error', err => logger.warn('autoupdate-error', { message: err.message }));
 autoUpdater.on('update-available', info => logger.info('autoupdate-available', { version: info.version }));
-autoUpdater.on('update-downloaded', info => logger.info('autoupdate-downloaded', { version: info.version }));
+autoUpdater.on('update-downloaded', async info => {
+  logger.info('autoupdate-downloaded', { version: info.version });
+  if (updatePromptShown) return;
+  updatePromptShown = true;
+
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.restore();
+      mainWindow.focus();
+    }
+    const options = createUpdatePromptOptions(info.version);
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    if (shouldInstallNow(result)) {
+      app.isQuitting = true;
+      autoUpdater.quitAndInstall(false, true);
+    } else {
+      logger.info('autoupdate-deferred', { version: info.version });
+    }
+  } catch (err) {
+    logger.warn('autoupdate-prompt-failed', { message: err.message });
+  }
+});
 
 console.log('[main] starting, gotTheLock check...');
 const gotTheLock = app.requestSingleInstanceLock();
@@ -33,6 +61,7 @@ let modalWindow = null;
 let tray = null;
 let freeItemsTimer = null;
 let freeItemsScanCancelled = false;
+let updatePromptShown = false;
 const pendingImportIntents = new Map();
 
 // IPC is a privileged boundary. Accept messages only from our two known local
@@ -537,7 +566,7 @@ if (!gotTheLock) {
     scheduleFreeItemsInterval();
 
     if (app.isPackaged) {
-      autoUpdater.checkForUpdatesAndNotify().catch(err => {
+      autoUpdater.checkForUpdates().catch(err => {
         logger.warn('autoupdate-check-failed', { message: err.message });
       });
     }
@@ -836,6 +865,7 @@ function onFileDetected(filePath) {
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('get-config', () => ({
+  appVersion: app.getVersion(),
   rootFolder: store.get('rootFolder', ''),
   watchedDomains: store.get('watchedDomains', []),
   downloadsFolder: store.get('downloadsFolder', app.getPath('downloads')),
@@ -849,6 +879,9 @@ ipcMain.handle('get-config', () => ({
   malwareScannerPath: store.get('malwareScannerPath', null),
   malwareScannerVersion: store.get('malwareScannerVersion', null),
   malwareScannerAvailable: store.get('malwareScannerAvailable', false),
+  showcasePublishUrl: store.get('showcasePublishUrl', ''),
+  showcaseTokenConfigured: Boolean(store.get('showcasePublishToken', '')),
+  showcaseLastPublishedAt: store.get('showcaseLastPublishedAt', ''),
 }));
 
 ipcMain.handle('get-release-notes', () => {
@@ -947,7 +980,26 @@ ipcMain.handle('set-config', (event, config) => {
   if (config.boothDownloadsFolder !== undefined) store.set('boothDownloadsFolder', config.boothDownloadsFolder);
   if (config.malwareScanEnabled !== undefined) store.set('malwareScanEnabled', config.malwareScanEnabled);
   if (config.malwareBacklogScanEnabled !== undefined) store.set('malwareBacklogScanEnabled', config.malwareBacklogScanEnabled);
+  if (typeof config.showcasePublishUrl === 'string') store.set('showcasePublishUrl', config.showcasePublishUrl.trim().slice(0, 2048));
+  if (typeof config.showcasePublishToken === 'string' && config.showcasePublishToken.trim()) store.set('showcasePublishToken', config.showcasePublishToken.trim());
   return true;
+});
+
+ipcMain.handle('create-showcase-snapshot', async () => {
+  const outputPath = path.join(app.getPath('documents'), 'BBLM Showcase', 'bblm-showcase.json');
+  return createShowcaseSnapshot({ store, outputPath });
+});
+
+ipcMain.handle('publish-showcase', async () => {
+  const publishUrl = store.get('showcasePublishUrl', '');
+  const token = store.get('showcasePublishToken', '');
+  if (!publishUrl) throw new Error('Set the showcase site URL first.');
+  if (!token) throw new Error('Set the showcase publishing token first.');
+  const outputPath = path.join(app.getPath('documents'), 'BBLM Showcase', 'bblm-showcase.json');
+  const snapshot = await createShowcaseSnapshot({ store, outputPath });
+  const result = await publishShowcaseSnapshot({ publishUrl, token, snapshotPath: outputPath });
+  store.set('showcaseLastPublishedAt', result.generatedAt || snapshot.generatedAt);
+  return { ...result, outputPath };
 });
 
 ipcMain.handle('copy-to-clipboard', (event, text) => {
@@ -1575,6 +1627,145 @@ async function runFreeItemsScan() {
 
 let scannerCancelled = false;
 let scannerWorker = null;
+const ORIGIN_REQUEST_DELAY_MS = 8000;
+const ORIGIN_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+let originFinderTimer = null;
+let originFinderInFlight = false;
+let originFinderQueue = [];
+let originFinderState = { running: false, paused: false, processed: 0, total: 0, nextRequestAt: 0, message: 'Ready' };
+
+function sendOriginFinder(type, data = {}) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('origin-finder-update', { type, ...data });
+}
+
+function setScannerOrigin(archive, origin) {
+  const stampedOrigin = { ...origin, updatedAt: Date.now() };
+  const results = store.get('scannerResults', []);
+  let selectedOriginUrl = '';
+  const updated = results.map(result => {
+    if (result.archive !== archive) return result;
+    selectedOriginUrl = result.selectedOriginUrl || autoSelectedCandidate(stampedOrigin)?.url || '';
+    return { ...result, origin: stampedOrigin, selectedOriginUrl };
+  });
+  store.set('scannerResults', updated);
+  sendOriginFinder('result', { archive, origin: stampedOrigin, selectedOriginUrl, state: originFinderState });
+}
+
+function saveOriginCache(query, candidates) {
+  const cache = store.get('boothOriginCache', {});
+  cache[query.toLowerCase()] = { savedAt: Date.now(), candidates };
+  const keys = Object.keys(cache).sort((a, b) => Number(cache[b]?.savedAt || 0) - Number(cache[a]?.savedAt || 0));
+  for (const key of keys.slice(1000)) delete cache[key];
+  store.set('boothOriginCache', cache);
+}
+
+function cachedOriginCandidates(query) {
+  const entry = store.get('boothOriginCache', {})[query.toLowerCase()];
+  if (!entry || Date.now() - Number(entry.savedAt || 0) > ORIGIN_CACHE_MAX_AGE_MS) return null;
+  return Array.isArray(entry.candidates) ? entry.candidates : [];
+}
+
+function prepareOriginResult(result) {
+  if (result.origin?.queryVersion === 3) return result;
+  const previousAutomaticUrl = result.origin?.status === 'exact' ? result.origin?.candidates?.[0]?.url : '';
+  const refreshed = extractBoothEvidence({ archivePath: result.archive, pathnames: result.pathnames || [result.content] });
+  const storedEvidence = result.originEvidence || {};
+  const originEvidence = {
+    ...storedEvidence,
+    query: refreshed.query,
+    terms: refreshed.terms,
+    itemIds: [...new Set([...(storedEvidence.itemIds || []), ...refreshed.itemIds])],
+    filenameItemIds: [...new Set([...(storedEvidence.filenameItemIds || []), ...refreshed.filenameItemIds])],
+  };
+  const prepared = { ...result, originEvidence };
+  return {
+    ...prepared,
+    origin: initialOrigin(prepared),
+    selectedOriginUrl: result.selectedOriginUrl === previousAutomaticUrl ? '' : result.selectedOriginUrl,
+  };
+}
+
+function scheduleNextOrigin(delay) {
+  if (!originFinderState.running) return;
+  originFinderState.nextRequestAt = Date.now() + delay;
+  sendOriginFinder('state', { state: originFinderState });
+  originFinderTimer = setTimeout(runNextOrigin, delay);
+}
+
+function runNextOrigin() {
+  if (originFinderInFlight) return;
+  originFinderInFlight = true;
+  processNextOrigin()
+    .catch(error => {
+      originFinderState = { ...originFinderState, running: false, nextRequestAt: 0, message: `Origin Finder stopped: ${error.message}` };
+      sendOriginFinder('state', { state: originFinderState });
+    })
+    .finally(() => { originFinderInFlight = false; });
+}
+
+async function processNextOrigin() {
+  originFinderTimer = null;
+  if (!originFinderState.running || originFinderState.paused) return;
+  const archive = originFinderQueue.shift();
+  if (!archive) {
+    originFinderState = { ...originFinderState, running: false, paused: false, nextRequestAt: 0, message: 'Origin search complete' };
+    sendOriginFinder('state', { state: originFinderState });
+    return;
+  }
+
+  const result = store.get('scannerResults', []).find(item => item.archive === archive);
+  if (!result) {
+    originFinderState.processed++;
+    scheduleNextOrigin(0);
+    return;
+  }
+  const prepared = result.origin || initialOrigin(result);
+  if (prepared.status === 'exact') {
+    setScannerOrigin(archive, prepared);
+    originFinderState.processed++;
+    scheduleNextOrigin(0);
+    return;
+  }
+  if (!prepared.query) {
+    setScannerOrigin(archive, { ...prepared, status: 'not-found', candidates: [], message: 'Not enough local metadata to search' });
+    originFinderState.processed++;
+    scheduleNextOrigin(0);
+    return;
+  }
+
+  setScannerOrigin(archive, { ...prepared, status: 'searching', message: `Searching BOOTH for “${prepared.query}”` });
+  const cached = cachedOriginCandidates(prepared.query);
+  try {
+    const searchedCandidates = cached === null ? await searchBooth(prepared.query) : cached;
+    if (cached === null) saveOriginCache(prepared.query, searchedCandidates);
+    const candidates = [...(prepared.candidates || []), ...searchedCandidates]
+      .filter((candidate, index, list) => list.findIndex(item => item.itemId === candidate.itemId) === index)
+      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+      .slice(0, 5);
+    setScannerOrigin(archive, {
+      ...prepared,
+      status: candidates.length ? 'found' : 'not-found',
+      candidates,
+      message: candidates.length ? `${candidates.length} BOOTH candidate${candidates.length === 1 ? '' : 's'}` : 'No BOOTH candidates found',
+      searchedAt: new Date().toISOString(),
+    });
+    originFinderState.processed++;
+    originFinderState.message = `Checked ${originFinderState.processed} of ${originFinderState.total}`;
+    scheduleNextOrigin(cached === null ? ORIGIN_REQUEST_DELAY_MS + Math.floor(Math.random() * 4000) : 25);
+  } catch (error) {
+    if (/HTTP 429/.test(error.message)) {
+      originFinderQueue.unshift(archive);
+      originFinderState.message = 'BOOTH asked BBLM to slow down. Waiting 5 minutes.';
+      setScannerOrigin(archive, { ...prepared, status: 'waiting', message: originFinderState.message });
+      scheduleNextOrigin(5 * 60 * 1000);
+      return;
+    }
+    setScannerOrigin(archive, { ...prepared, status: 'error', message: error.message });
+    originFinderState.processed++;
+    originFinderState.message = `Could not check ${path.basename(archive)}`;
+    scheduleNextOrigin(ORIGIN_REQUEST_DELAY_MS + Math.floor(Math.random() * 4000));
+  }
+}
 
 function find7zip() {
   const candidates = [
@@ -1592,13 +1783,110 @@ function find7zip() {
   return null;
 }
 
-ipcMain.handle('scanner-get-results',   () => store.get('scannerResults', []));
-ipcMain.handle('scanner-save-results',  (event, results) => { store.set('scannerResults', results); return true; });
-ipcMain.handle('scanner-clear-results', () => { store.set('scannerResults', []); return true; });
+ipcMain.handle('scanner-get-results', () => {
+  const results = store.get('scannerResults', []).map(prepareOriginResult);
+  store.set('scannerResults', results);
+  return results;
+});
+ipcMain.handle('scanner-save-results',  (event, results) => {
+  const previous = new Map(store.get('scannerResults', []).map(result => [result.archive, result]));
+  const merged = (Array.isArray(results) ? results : []).map(result => {
+    const old = previous.get(result.archive);
+    const oldStamp = Number(old?.origin?.updatedAt || 0);
+    const newStamp = Number(result?.origin?.updatedAt || 0);
+    return oldStamp > newStamp ? { ...result, origin: old.origin } : result;
+  });
+  store.set('scannerResults', merged);
+  return true;
+});
+ipcMain.handle('scanner-clear-results', () => {
+  if (originFinderTimer) clearTimeout(originFinderTimer);
+  originFinderTimer = null;
+  originFinderQueue = [];
+  originFinderState = { running: false, paused: false, processed: 0, total: 0, nextRequestAt: 0, message: 'Ready' };
+  store.set('scannerResults', []);
+  return true;
+});
+ipcMain.handle('scanner-get-folder', () => {
+  const folderPath = store.get('scannerFolder', '');
+  try {
+    return typeof folderPath === 'string' && fs.statSync(folderPath).isDirectory() ? folderPath : '';
+  } catch {
+    return '';
+  }
+});
+
+ipcMain.handle('origin-finder-state', () => originFinderState);
+
+ipcMain.handle('origin-finder-search-one', (event, archive) => {
+  const results = store.get('scannerResults', []);
+  const index = results.findIndex(result => result.archive === archive);
+  if (index < 0) return { ...originFinderState, error: 'Scanner result not found' };
+  results[index] = prepareOriginResult(results[index]);
+  store.set('scannerResults', results);
+  if (['searching', 'waiting'].includes(results[index].origin?.status) || originFinderQueue.includes(archive)) return originFinderState;
+
+  originFinderQueue.unshift(archive);
+  if (originFinderState.running) {
+    originFinderState.total++;
+    originFinderState.message = `Queued ${path.basename(archive)}`;
+    sendOriginFinder('state', { state: originFinderState });
+    return originFinderState;
+  }
+
+  originFinderState = { running: true, paused: false, processed: 0, total: 1, nextRequestAt: 0, message: `Searching ${path.basename(archive)}` };
+  sendOriginFinder('state', { state: originFinderState });
+  runNextOrigin();
+  return originFinderState;
+});
+
+ipcMain.handle('origin-finder-start', () => {
+  if (originFinderState.running || originFinderInFlight) return originFinderState;
+  if (originFinderTimer) clearTimeout(originFinderTimer);
+  originFinderTimer = null;
+  const results = store.get('scannerResults', []).map(prepareOriginResult);
+  store.set('scannerResults', results);
+  originFinderQueue = results
+    .filter(result => !['exact', 'found'].includes(result.origin.status))
+    .map(result => result.archive);
+  originFinderState = {
+    running: originFinderQueue.length > 0,
+    paused: false,
+    processed: 0,
+    total: originFinderQueue.length,
+    nextRequestAt: 0,
+    message: originFinderQueue.length ? 'Starting BOOTH origin search' : 'No items need a BOOTH search',
+  };
+  for (const result of results) sendOriginFinder('result', { archive: result.archive, origin: result.origin, state: originFinderState });
+  sendOriginFinder('state', { state: originFinderState });
+  if (originFinderState.running) runNextOrigin();
+  return originFinderState;
+});
+
+ipcMain.handle('origin-finder-pause', () => {
+  if (originFinderTimer) clearTimeout(originFinderTimer);
+  originFinderTimer = null;
+  originFinderState = { ...originFinderState, running: false, paused: true, nextRequestAt: 0, message: 'Origin search paused' };
+  sendOriginFinder('state', { state: originFinderState });
+  return originFinderState;
+});
 
 ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl }) => {
   const { scrapePageMeta } = require('./src/scraper');
-  const { importAsset } = require('./src/assetManager');
+  const { importAsset, appendToExistingBoothAsset } = require('./src/assetManager');
+
+  try {
+    const appended = appendToExistingBoothAsset({ originUrl, filePath: archivePath, store });
+    if (appended) {
+      const scannerResults = store.get('scannerResults', []);
+      store.set('scannerResults', removeScannerResult(scannerResults, archivePath));
+      if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: appended.assetId });
+      runMalwareScanForAsset(appended.assetId);
+      return { ok: true, assetId: appended.assetId, assetName: appended.meta.name };
+    }
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 
   let assetName = path.basename(archivePath, path.extname(archivePath)).replace(/[-_]+/g, ' ').trim();
   let tags = [];
@@ -1619,6 +1907,8 @@ ipcMain.handle('scanner-import-asset', async (event, { archivePath, originUrl })
 
   try {
     const result = await importAsset({ originUrl, filePath: archivePath, selectedImageUrl, assetName, tags, isAdult, store });
+    const scannerResults = store.get('scannerResults', []);
+    store.set('scannerResults', removeScannerResult(scannerResults, archivePath));
     if (mainWindow) mainWindow.webContents.send('refresh-library', { assetId: result.assetId });
     runMalwareScanForAsset(result.assetId);
     return { ok: true, assetId: result.assetId, assetName: result.meta.name };
@@ -1642,6 +1932,7 @@ ipcMain.handle('scanner-scan', async (event, folderPath) => {
     return { ok: false, error: 'Invalid scan folder' };
   }
   if (scannerWorker) return { ok: false, error: 'A scan is already running' };
+  store.set('scannerFolder', folderPath);
   const { fork } = require('child_process');
   const COMPRESSED_EXTS = new Set(['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.unitypackage', '.nupkg', '.jar', '.whl', '.egg']);
   const archives = [];
@@ -1669,13 +1960,31 @@ ipcMain.handle('scanner-scan', async (event, folderPath) => {
     worker.on('message', data => {
       if (data.type === 'archive') {
         send({ type: 'scanning', current: data.archive, index: data.index, total: data.total });
-        if (data.found) send({ type: 'result', archive: data.archive, content: data.found });
+        if (data.found) {
+          const originEvidence = extractBoothEvidence({ archivePath: data.archive, pathnames: data.pathnames, metadataTexts: data.metadataTexts });
+          const result = { archive: data.archive, content: data.found, pathnames: data.pathnames, originEvidence };
+          result.origin = initialOrigin(result);
+          result.selectedOriginUrl = autoSelectedCandidate(result.origin)?.url || '';
+          send({ type: 'result', ...result });
+        }
       } else if (data.type === 'archive_error') send(data);
       else if (data.type === 'done') { send(data); finish({ ok: true }); }
       else if (data.type === 'cancelled') { send(data); finish({ ok: false }); }
     });
     worker.on('error', err => { send({ type: 'error', message: err.message }); finish({ ok: false, error: err.message }); });
-    worker.send({ type: 'scan', sevenZip, archives, limits: { maxEntries: 5000, maxEntryBytes: 512 * 1024 * 1024, maxArchiveBytes: 2 * 1024 * 1024 * 1024, pathnameBytes: 64 * 1024, archiveTimeoutMs: 60000 } });
+    worker.send({
+      type: 'scan',
+      sevenZip,
+      archives,
+      limits: {
+        maxEntries: 5000,
+        maxEntryBytes: 8 * 1024 * 1024 * 1024,
+        maxArchiveBytes: 32 * 1024 * 1024 * 1024,
+        archiveTimeoutMs: 60000,
+        maxDepth: 4,
+        maxNestedArchives: 100,
+      },
+    });
   });
 });
 

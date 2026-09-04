@@ -21,6 +21,11 @@ const scBtnPrev     = document.getElementById('sc-btn-prev');
 const scBtnNext     = document.getElementById('sc-btn-next');
 const scBtnLast     = document.getElementById('sc-btn-last');
 const scBtnClear    = document.getElementById('sc-btn-clear');
+const scBtnFindOrigins = document.getElementById('sc-btn-find-origins');
+const scBtnPauseOrigins = document.getElementById('sc-btn-pause-origins');
+const scOriginProgress = document.getElementById('sc-origin-progress');
+const scResultSearch = document.getElementById('sc-result-search');
+const scOriginFilter = document.getElementById('sc-origin-filter');
 
 const SC_PAGE_SIZE = 10;
 
@@ -47,12 +52,29 @@ function scSetProgress(pct, label) {
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 
-function scTotalPages() {
-  return Math.max(1, Math.ceil(scAllResults.length / SC_PAGE_SIZE));
+function scVisibleResults() {
+  const search = scResultSearch.value.trim().toLowerCase();
+  const filter = scOriginFilter.value;
+  return scAllResults.filter(result => {
+    const origin = result.origin || {};
+    if (filter === 'high-confidence' && !(origin.candidates || []).some(candidate => candidate.confidence === 'exact' || candidate.confidence === 'high')) return false;
+    if (filter === 'found' && origin.status !== 'found') return false;
+    if (filter === 'selected' && !result.selectedOriginUrl) return false;
+    if (filter === 'needs-review' && (origin.status === 'exact' || result.selectedOriginUrl)) return false;
+    if (!search) return true;
+    const candidateText = (origin.candidates || []).map(candidate => `${candidate.title || ''} ${candidate.shop || ''} ${candidate.itemId || ''}`).join(' ');
+    return `${result.archive} ${result.content} ${origin.query || ''} ${candidateText}`.toLowerCase().includes(search);
+  });
 }
 
-function scRenderPage() {
-  const total = scAllResults.length;
+function scTotalPages() {
+  return Math.max(1, Math.ceil(scVisibleResults().length / SC_PAGE_SIZE));
+}
+
+function scRenderPage(resetScroll = false) {
+  const previousScroll = scResultsList.scrollTop;
+  const visible = scVisibleResults();
+  const total = visible.length;
   const pages = scTotalPages();
   scPage = Math.min(Math.max(1, scPage), pages);
 
@@ -61,14 +83,15 @@ function scRenderPage() {
 
   scResultsList.innerHTML = '';
   for (let i = start; i < end; i++) {
-    scResultsList.appendChild(scAllResults[i].node);
+    scResultsList.appendChild(visible[i].node);
   }
-  // Scroll list back to top on page change
-  scResultsList.scrollTop = 0;
+  scResultsList.scrollTop = resetScroll ? 0 : previousScroll;
 
   // Info
   scPagInfo.textContent = total === 0 ? '' : `${start + 1}–${end} of ${total}`;
-  scResultsCount.textContent = `${total} result${total !== 1 ? 's' : ''}`;
+  scResultsCount.textContent = total === scAllResults.length
+    ? `${total} result${total !== 1 ? 's' : ''}`
+    : `${total} of ${scAllResults.length} results`;
 
   // Page buttons
   scPagPages.innerHTML = '';
@@ -82,7 +105,7 @@ function scRenderPage() {
     btn.className = 'btn-ghost pag-btn' + (p === scPage ? ' pag-btn--active' : '');
     btn.textContent = p;
     btn.disabled = p === scPage;
-    btn.addEventListener('click', () => { scPage = p; scRenderPage(); });
+    btn.addEventListener('click', () => { scPage = p; scRenderPage(true); });
     scPagPages.appendChild(btn);
   }
 
@@ -94,14 +117,17 @@ function scRenderPage() {
   scPagBar.style.display = pages > 1 ? 'flex' : 'none';
 }
 
-scBtnFirst.addEventListener('click', () => { scPage = 1;             scRenderPage(); });
-scBtnPrev .addEventListener('click', () => { scPage--;               scRenderPage(); });
-scBtnNext .addEventListener('click', () => { scPage++;               scRenderPage(); });
-scBtnLast .addEventListener('click', () => { scPage = scTotalPages(); scRenderPage(); });
+scBtnFirst.addEventListener('click', () => { scPage = 1;             scRenderPage(true); });
+scBtnPrev .addEventListener('click', () => { scPage--;               scRenderPage(true); });
+scBtnNext .addEventListener('click', () => { scPage++;               scRenderPage(true); });
+scBtnLast .addEventListener('click', () => { scPage = scTotalPages(); scRenderPage(true); });
+scResultSearch.addEventListener('input', () => { scPage = 1; scRenderPage(true); });
+scOriginFilter.addEventListener('change', () => { scPage = 1; scRenderPage(true); });
 
 // ── Build a result card (DOM only, not yet appended) ─────────────────────────
 
-function scBuildResultNode(archive, content) {
+function scBuildResultNode(result) {
+  const { archive, content } = result;
   const item = document.createElement('div');
   item.className = 'sc-result-item';
   item.innerHTML = `
@@ -113,8 +139,12 @@ function scBuildResultNode(archive, content) {
     <div class="sc-result-content">
       <span class="sc-result-content-text">${scEsc(content)}</span>
     </div>
+    <div class="sc-result-origin">
+      <div class="sc-origin-summary"></div>
+      <div class="sc-origin-candidates"></div>
+    </div>
     <div class="sc-result-import-row">
-      <input class="sc-result-url-input" type="url" placeholder="Origin URL (Booth, Gumroad…)" autocomplete="off" spellcheck="false" />
+      <input class="sc-result-url-input" type="url" placeholder="Confirmed BOOTH origin URL" autocomplete="off" spellcheck="false" />
       <button class="sc-result-import-btn btn-primary">+ Add to Library</button>
     </div>
   `;
@@ -125,6 +155,12 @@ function scBuildResultNode(archive, content) {
 
   const urlInput  = item.querySelector('.sc-result-url-input');
   const importBtn = item.querySelector('.sc-result-import-btn');
+  urlInput.value = result.selectedOriginUrl || '';
+  urlInput.addEventListener('change', () => {
+    result.selectedOriginUrl = urlInput.value.trim();
+    scSave();
+  });
+  scRenderOrigin(item, result);
 
   importBtn.addEventListener('click', async () => {
     importBtn.disabled = true;
@@ -136,6 +172,7 @@ function scBuildResultNode(archive, content) {
     });
 
     if (result.ok) {
+      if (await scRemoveResult(archive)) return;
       importBtn.textContent = '✓ Added';
       importBtn.classList.remove('btn-primary');
       importBtn.classList.add('btn-secondary');
@@ -152,18 +189,130 @@ function scBuildResultNode(archive, content) {
   return item;
 }
 
+function scRenderOriginState(state) {
+  if (!state) return;
+  scOriginProgress.textContent = state.total
+    ? `${state.message} · ${state.processed}/${state.total}`
+    : state.message;
+  scBtnFindOrigins.textContent = state.paused ? '▶ Resume Origin Search' : '⌕ Find BOOTH Origins';
+  scBtnPauseOrigins.style.display = state.running ? '' : 'none';
+}
+
+function scRenderOrigin(item, result) {
+  const origin = result.origin || { status: 'ready', candidates: [] };
+  const summary = item.querySelector('.sc-origin-summary');
+  const candidatesWrap = item.querySelector('.sc-origin-candidates');
+  const urlInput = item.querySelector('.sc-result-url-input');
+  if (result.selectedOriginUrl && urlInput.value !== result.selectedOriginUrl) {
+    urlInput.value = result.selectedOriginUrl;
+  }
+  const labels = {
+    exact: 'Exact local match', ready: 'Ready for BOOTH search', searching: 'Searching BOOTH',
+    waiting: 'Waiting for BOOTH', found: 'Candidates found', 'not-found': 'No candidate', error: 'Search error',
+  };
+  summary.innerHTML = '';
+  candidatesWrap.innerHTML = '';
+
+  const automaticCandidate = (origin.candidates || []).find(candidate => candidate.confidence === 'exact' || candidate.confidence === 'high');
+  item.classList.toggle('sc-result-item--high-confidence', Boolean(automaticCandidate));
+  if (['exact', 'found'].includes(origin.status) && !result.selectedOriginUrl && automaticCandidate) {
+    result.selectedOriginUrl = automaticCandidate.url;
+    urlInput.value = result.selectedOriginUrl;
+  }
+
+  const badge = document.createElement('span');
+  badge.className = `sc-origin-badge sc-origin-badge--${origin.status || 'ready'}`;
+  badge.textContent = labels[origin.status] || 'Origin Finder';
+  summary.appendChild(badge);
+
+  const detail = document.createElement('span');
+  detail.className = 'sc-origin-detail';
+  detail.textContent = origin.message || (origin.query ? `Query: ${origin.query}` : 'Local metadata will be checked first');
+  summary.appendChild(detail);
+
+  const searchButton = document.createElement('button');
+  searchButton.className = 'btn-ghost sc-origin-search-one';
+  searchButton.textContent = 'Search this item';
+  searchButton.disabled = ['searching', 'waiting'].includes(origin.status);
+  searchButton.addEventListener('click', async () => {
+    searchButton.disabled = true;
+    try {
+      scRenderOriginState(await window.api.originFinderSearchOne(result.archive));
+    } finally {
+      if (!['searching', 'waiting'].includes(result.origin?.status)) searchButton.disabled = false;
+    }
+  });
+  summary.appendChild(searchButton);
+
+  for (const candidate of (origin.candidates || []).slice(0, 3)) {
+    const row = document.createElement('div');
+    const highConfidence = candidate.confidence === 'exact' || candidate.confidence === 'high';
+    row.className = `sc-origin-candidate${highConfidence ? ' sc-origin-candidate--high-confidence' : ''}`;
+    const info = document.createElement('div');
+    info.className = 'sc-origin-candidate-info';
+    const title = document.createElement('span');
+    title.className = 'sc-origin-candidate-title';
+    title.textContent = candidate.title || `BOOTH item #${candidate.itemId}`;
+    const meta = document.createElement('span');
+    meta.className = 'sc-origin-candidate-meta';
+    meta.textContent = [candidate.shop, candidate.confidence && `${candidate.confidence} confidence`, candidate.reason].filter(Boolean).join(' · ');
+    info.append(title, meta);
+
+    const useButton = document.createElement('button');
+    useButton.className = 'btn-secondary sc-origin-use';
+    useButton.textContent = result.selectedOriginUrl === candidate.url ? '✓ Selected' : 'Use';
+    useButton.addEventListener('click', () => {
+      result.selectedOriginUrl = candidate.url;
+      urlInput.value = candidate.url;
+      scSave();
+      scRenderOrigin(item, result);
+      scRenderPage();
+    });
+    const openButton = document.createElement('button');
+    openButton.className = 'btn-ghost sc-origin-open';
+    openButton.textContent = 'Open';
+    openButton.addEventListener('click', () => window.api.openExternal(candidate.url));
+    row.append(info, useButton, openButton);
+    candidatesWrap.appendChild(row);
+  }
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 function scSave() {
-  window.api.scannerSaveResults(scAllResults.map(r => ({ archive: r.archive, content: r.content })));
+  return window.api.scannerSaveResults(scAllResults.map(r => ({
+    archive: r.archive,
+    content: r.content,
+    pathnames: r.pathnames,
+    originEvidence: r.originEvidence,
+    origin: r.origin,
+    selectedOriginUrl: r.selectedOriginUrl,
+  })));
+}
+
+async function scRemoveResult(archive) {
+  const previousLength = scAllResults.length;
+  scAllResults = scAllResults.filter(result => result.archive !== archive);
+  if (scAllResults.length === previousLength) return false;
+
+  await scSave();
+  scRenderPage();
+  if (scAllResults.length === 0) {
+    scResults.style.display = 'none';
+    scPagBar.style.display = 'none';
+    scEmpty.style.display = 'block';
+    scEmpty.textContent = 'No saved scan results remain.';
+  }
+  return true;
 }
 
 async function scLoadSaved() {
   const saved = await window.api.scannerGetResults();
   if (!saved || saved.length === 0) return;
-  for (const { archive, content } of saved) {
-    const node = scBuildResultNode(archive, content);
-    scAllResults.push({ archive, content, node });
+  for (const savedResult of saved) {
+    const result = { ...savedResult };
+    result.node = scBuildResultNode(result);
+    scAllResults.push(result);
   }
   scEmpty.style.display = 'none';
   scResults.style.display = 'flex';
@@ -172,11 +321,29 @@ async function scLoadSaved() {
 
 scLoadSaved();
 
+async function scLoadFolder() {
+  const folder = await window.api.scannerGetFolder();
+  if (!folder) return;
+  scSelectedFolder = folder;
+  scFolderPath.textContent = folder;
+  scFolderPath.classList.add('has-path');
+  scBtnScan.disabled = false;
+}
+
+scLoadFolder();
+
 // ── Add a result (called from progress handler) ───────────────────────────────
 
-function scAddResult(archive, content) {
-  const node = scBuildResultNode(archive, content);
-  scAllResults.push({ archive, content, node });
+function scAddResult(data) {
+  const result = {
+    archive: data.archive,
+    content: data.content,
+    pathnames: data.pathnames,
+    originEvidence: data.originEvidence,
+    origin: data.origin,
+  };
+  result.node = scBuildResultNode(result);
+  scAllResults.push(result);
   scSave();
 
   if (scResults.style.display === 'none') {
@@ -185,9 +352,7 @@ function scAddResult(archive, content) {
   }
 
   // Stay on current page if it's not yet full; otherwise just update count/pagination
-  const onLastPage = scPage === scTotalPages();
-  if (onLastPage) scRenderPage();
-  else scResultsCount.textContent = `${scAllResults.length} result${scAllResults.length !== 1 ? 's' : ''}`;
+  scRenderPage();
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
@@ -227,6 +392,19 @@ scBtnScan.addEventListener('click', async () => {
 scBtnCancel.addEventListener('click', async () => {
   await window.api.scannerCancel();
   scSetStatus('Cancelling…');
+});
+
+scBtnFindOrigins.addEventListener('click', async () => {
+  scBtnFindOrigins.disabled = true;
+  try {
+    scRenderOriginState(await window.api.originFinderStart());
+  } finally {
+    scBtnFindOrigins.disabled = false;
+  }
+});
+
+scBtnPauseOrigins.addEventListener('click', async () => {
+  scRenderOriginState(await window.api.originFinderPause());
 });
 
 scBtnCopyAll.addEventListener('click', () => {
@@ -269,7 +447,7 @@ window.api.onScannerProgress((data) => {
       break;
 
     case 'result':
-      scAddResult(data.archive, data.content);
+      scAddResult(data);
       break;
 
     case 'archive_error':
@@ -293,7 +471,7 @@ window.api.onScannerProgress((data) => {
         `Done — ${data.found} result${data.found !== 1 ? 's' : ''} in ${data.total} archive${data.total !== 1 ? 's' : ''}`,
         'done'
       );
-      if (data.found === 0) scEmpty.textContent = 'No pathname files found in any archive.';
+      if (data.found === 0) scEmpty.textContent = 'No Unity packages were found in the selected folder or its compressed files.';
       scFinishScan();
       break;
   }
@@ -304,3 +482,16 @@ function scFinishScan() {
   scBtnScan.style.display = '';
   scBtnCancel.style.display = 'none';
 }
+
+window.api.onOriginFinderUpdate(data => {
+  if (data.state) scRenderOriginState(data.state);
+  if (data.type !== 'result') return;
+  const result = scAllResults.find(item => item.archive === data.archive);
+  if (!result) return;
+  result.origin = data.origin;
+  if (data.selectedOriginUrl && !result.selectedOriginUrl) result.selectedOriginUrl = data.selectedOriginUrl;
+  scRenderOrigin(result.node, result);
+  scRenderPage();
+});
+
+window.api.originFinderState().then(scRenderOriginState);

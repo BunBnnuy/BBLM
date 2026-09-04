@@ -6,6 +6,28 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.5.0] — 2026-09-04
+
+### Added
+
+- **BOOTH Origin Finder** — the Library Scanner can use archive names, Unity package pathnames, and local README or metadata files to search for the matching BOOTH item. Searches run in a resumable background queue with a 30-day cache, an 8–12 second request interval, and a five-minute pause after a rate-limit response.
+- **Origin review controls** — scanner results now show ranked BOOTH candidates, high-confidence highlights, individual search buttons, origin-state filters, and a confirmed origin URL field. High-confidence search results are selected automatically.
+- **Recursive compressed-file scanning** — ZIP, RAR, 7Z, TAR, and other supported archives are opened recursively to find nested Unity packages. Results show the full `Assets/...` pathname stored inside each package.
+- **Public showcase publishing** — Settings can create a sanitized catalog snapshot and publish it to a configured HTTPS showcase endpoint. Private absolute paths, hidden entries, and adult entries are not included.
+
+### Changed
+
+- The Library Scanner remembers the last selected folder and removes a result from the saved list after a successful import.
+- The Settings page shows the installed version. Downloaded updates now ask whether to install immediately or when the app closes.
+
+### Fixed
+
+- **Scanner imports from the same BOOTH item created numbered asset folders.** Later files now use the first item folder and are added to its file list with collision-safe names.
+- Searching one scanner result no longer scrolls the list to the top or moves the selected result out of view.
+- BOOTH item IDs found in filenames or package metadata are treated as review candidates instead of exact matches because they can refer to dependencies.
+
+---
+
 ## [1.4.1] — 2026-08-28
 
 ### Fixed

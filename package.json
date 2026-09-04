@@ -1,6 +1,6 @@
 {
   "name": "bbs-libman",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "BB's Library Manager for 3D model and game asset downloads",
   "main": "main.js",
   "scripts": {
@@ -18,6 +18,7 @@
     "files": [
       "**/*",
       "!booth-forum-link-extension{,/**/*}",
+      "!AGENTS.md",
       "!.claude{,/**/*}",
       "!test{,/**/*}",
       "!plan.md"
@@ -37,7 +38,7 @@
   "license": "MIT",
   "type": "commonjs",
   "overrides": {
-    "fast-uri": "^4.1.2",
+    "fast-uri": "^4.1.4",
     "undici": "^8.10.0"
   },
   "dependencies": {

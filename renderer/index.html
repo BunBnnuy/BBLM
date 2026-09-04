@@ -168,6 +168,17 @@
     <div id="sc-results" class="sc-results" style="display:none;">
       <div class="sc-results-header">
         <span id="sc-results-count" class="sc-results-count"></span>
+        <input id="sc-result-search" class="sc-result-search" type="search" placeholder="Filter files or origins" />
+        <select id="sc-origin-filter" class="sc-origin-filter">
+          <option value="all">All origin states</option>
+          <option value="high-confidence">High-confidence matches</option>
+          <option value="found">BOOTH candidates</option>
+          <option value="needs-review">Needs origin</option>
+          <option value="selected">Selected origins</option>
+        </select>
+        <span id="sc-origin-progress" class="sc-origin-progress">Origin Finder ready</span>
+        <button class="btn-secondary" id="sc-btn-find-origins" style="font-size:11px;padding:3px 10px;">⌕ Find BOOTH Origins</button>
+        <button class="btn-ghost" id="sc-btn-pause-origins" style="font-size:11px;padding:3px 10px;display:none;">Ⅱ Pause</button>
         <button class="btn-ghost" id="sc-btn-copy-all" style="font-size:11px;padding:3px 10px;">⎘ Copy All</button>
         <button class="btn-ghost" id="sc-btn-clear" style="font-size:11px;padding:3px 10px;">✕ Clear</button>
       </div>

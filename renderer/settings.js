@@ -13,6 +13,9 @@ const schemeVroidToggle = document.getElementById('scheme-vroid-toggle');
 const malwareScanToggle = document.getElementById('malware-scan-toggle');
 const malwareBacklogToggle = document.getElementById('malware-backlog-toggle');
 const malwareScannerStatus = document.getElementById('malware-scanner-status');
+const showcasePublishUrl = document.getElementById('showcase-publish-url');
+const showcasePublishToken = document.getElementById('showcase-publish-token');
+const showcaseStatus = document.getElementById('showcase-status');
 
 function setToggleState(enabled) {
   monitorToggle.textContent = enabled ? 'On' : 'Off';
@@ -193,6 +196,7 @@ function safeImageUrl(value, local = false) {
 
 async function load() {
   const config = await window.api.getConfig();
+  document.getElementById('app-version').textContent = `Version ${config.appVersion || ''}`.trim();
   rootInput.value = config.rootFolder || '';
   downloadsInput.value = config.downloadsFolder || '';
   setNotificationsToggle(config.notificationsEnabled !== false);
@@ -202,6 +206,13 @@ async function load() {
   boothDownloadsInput.value = config.boothDownloadsFolder || '';
   setMalwareScanToggle(config.malwareScanEnabled !== false);
   setMalwareBacklogToggle(config.malwareBacklogScanEnabled !== false);
+  showcasePublishUrl.value = config.showcasePublishUrl || '';
+  showcasePublishToken.placeholder = config.showcaseTokenConfigured
+    ? 'Publishing token is configured — leave blank to keep it'
+    : 'Enter the private publishing token';
+  showcaseStatus.textContent = config.showcaseLastPublishedAt
+    ? `Last published ${new Date(config.showcaseLastPublishedAt).toLocaleString()}`
+    : 'No snapshot has been published from this app yet.';
   if (config.malwareScannerAvailable) {
     malwareScannerStatus.value = `vrchat-scanner ${config.malwareScannerVersion || ''} — ${config.malwareScannerPath || ''}`.trim();
   } else {
@@ -239,6 +250,51 @@ document.getElementById('btn-reveal-unity-companion').addEventListener('click', 
   window.api.revealUnityCompanion();
 });
 
+async function saveShowcaseSettings() {
+  await window.api.setConfig({
+    showcasePublishUrl: showcasePublishUrl.value,
+    showcasePublishToken: showcasePublishToken.value,
+  });
+  if (showcasePublishToken.value) {
+    showcasePublishToken.value = '';
+    showcasePublishToken.placeholder = 'Publishing token is configured — leave blank to keep it';
+  }
+}
+
+document.getElementById('btn-create-showcase').addEventListener('click', async () => {
+  showcaseStatus.textContent = 'Creating a sanitized snapshot…';
+  try {
+    const result = await window.api.createShowcaseSnapshot();
+    showcaseStatus.textContent = `Created ${result.assetCount} public cards at ${result.outputPath}`;
+  } catch (error) {
+    showcaseStatus.textContent = `Could not create the snapshot: ${error.message}`;
+  }
+});
+
+document.getElementById('btn-publish-showcase').addEventListener('click', async () => {
+  showcaseStatus.textContent = 'Creating and publishing the snapshot…';
+  try {
+    await saveShowcaseSettings();
+    const result = await window.api.publishShowcase();
+    showcaseStatus.textContent = `Published ${result.assetCount} public cards.`;
+  } catch (error) {
+    showcaseStatus.textContent = `Could not publish the snapshot: ${error.message}`;
+  }
+});
+
+document.getElementById('btn-open-showcase').addEventListener('click', async () => {
+  try {
+    const value = new URL(showcasePublishUrl.value);
+    if (value.protocol !== 'https:') throw new Error('HTTPS is required.');
+    value.pathname = value.pathname.replace(/\/api\/publish\/?$/, '') || '/';
+    value.search = '';
+    value.hash = '';
+    await window.api.openExternal(value.href);
+  } catch (error) {
+    showcaseStatus.textContent = `Could not open the showcase: ${error.message}`;
+  }
+});
+
 async function loadUnityProjects() {
   const listEl = document.getElementById('unity-projects-list');
   const emptyEl = document.getElementById('unity-projects-empty');
@@ -271,6 +327,8 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     boothDownloadsFolder: boothDownloadsInput.value,
     malwareScanEnabled: malwareScanToggle.getAttribute('aria-checked') === 'true',
     malwareBacklogScanEnabled: malwareBacklogToggle.getAttribute('aria-checked') === 'true',
+    showcasePublishUrl: showcasePublishUrl.value,
+    showcasePublishToken: showcasePublishToken.value,
   });
   saveStatus.textContent = '✔ Settings saved.';
   saveStatus.className = 'status success';

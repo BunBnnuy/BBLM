@@ -1554,12 +1554,28 @@ button.scan-dot:hover { outline: 2px solid var(--border); outline-offset: 2px; }
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .sc-results-count {
   font-size: 12px;
   color: var(--text-dim);
   flex: 1;
 }
+.sc-origin-progress {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 150px;
+  text-align: right;
+}
+.sc-result-search,
+.sc-origin-filter {
+  width: auto;
+  height: 27px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.sc-result-search { min-width: 170px; }
+.sc-origin-filter { min-width: 140px; }
 
 /* ── Scrollable list — takes all space between header and pagination ── */
 .sc-results-list {
@@ -1584,6 +1600,10 @@ button.scan-dot:hover { outline: 2px solid var(--border); outline-offset: 2px; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+}
+.sc-result-item--high-confidence {
+  border-color: rgba(76, 175, 125, .8);
+  box-shadow: 0 0 0 1px rgba(76, 175, 125, .2), 0 0 14px rgba(76, 175, 125, .1);
 }
 
 /* Row 1: archive path */
@@ -1638,7 +1658,93 @@ button.scan-dot:hover { outline: 2px solid var(--border); outline-offset: 2px; }
   text-overflow: ellipsis;
 }
 
-/* Row 3: URL input + import button */
+/* Row 3: background BOOTH origin discovery */
+.sc-result-origin {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(15, 52, 96, .18);
+}
+.sc-origin-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+.sc-origin-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+}
+.sc-origin-badge--exact,
+.sc-origin-badge--found { background: rgba(76, 175, 125, .16); color: #65d49a; }
+.sc-origin-badge--searching,
+.sc-origin-badge--waiting { background: rgba(233, 185, 63, .15); color: var(--warn); }
+.sc-origin-badge--error { background: var(--danger-dim); color: var(--accent); }
+.sc-origin-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.sc-origin-search-one {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 10px;
+}
+.sc-origin-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 5px;
+}
+.sc-origin-candidates:empty { display: none; }
+.sc-origin-candidate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.sc-origin-candidate--high-confidence {
+  border-color: rgba(76, 175, 125, .7);
+  background: rgba(76, 175, 125, .1);
+}
+.sc-origin-candidate--high-confidence .sc-origin-candidate-title {
+  color: #7be2aa;
+  font-weight: 600;
+}
+.sc-origin-candidate-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.sc-origin-candidate-title,
+.sc-origin-candidate-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-origin-candidate-title { color: var(--text); font-size: 11px; }
+.sc-origin-candidate-meta { color: var(--text-dim); font-size: 10px; }
+.sc-origin-use,
+.sc-origin-open {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 10px;
+}
+
+/* Row 4: URL input + import button */
 .sc-result-import-row {
   display: flex;
   align-items: center;

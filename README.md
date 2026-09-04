@@ -66,8 +66,11 @@ A dedicated tab that automatically scans Booth.pm for ¥0 VRChat items:
 ### 🔍 Library Scanner
 A utility tab for discovering assets already on your disk that haven't been imported yet:
 
-- **Folder scan** — pick any folder and scan it recursively for archives and Unity packages
+- **Folder scan** — pick any folder and scan it for Unity packages, including packages inside nested ZIP, RAR, 7Z, TAR, and other supported compressed files
 - **Paginated results** — found files listed 10 at a time with archive name, contained files, and full path
+- **BOOTH Origin Finder** — inspect archive names, Unity pathnames, README files, and package metadata for local evidence, then rank BOOTH candidates in a resumable background queue
+- **Rate-limit protection** — cache BOOTH searches for 30 days, wait 8–12 seconds between uncached requests, and back off for five minutes after HTTP 429
+- **Review tools** — filter by origin state, search across files and candidates, open a listing, and select the confirmed URL before import
 - **One-click import** — import any discovered file directly into BBLM without leaving the tab
 - **Copy All** — copy the full list of found paths to the clipboard in one click
 - **Progress bar** — real-time scan progress shown while scanning large folder trees

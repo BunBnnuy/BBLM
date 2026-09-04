@@ -409,9 +409,16 @@ function finalizeAssetDownload({ assetId, filePath, store }) {
   return { assetId, fileName: savedName, meta };
 }
 
+function appendToExistingBoothAsset({ originUrl, filePath, store }) {
+  const existing = findExistingBoothAsset({ originUrl, store });
+  if (!existing) return null;
+  return finalizeAssetDownload({ assetId: existing.id, filePath, store });
+}
+
 module.exports = {
   importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile, registerTags,
   extractBoothItemId, findExistingBoothAsset,
-  createAssetShell, finalizeAssetDownload, discardIncompleteDownload, cleanupIncompleteDownloads,
+  createAssetShell, finalizeAssetDownload, appendToExistingBoothAsset,
+  discardIncompleteDownload, cleanupIncompleteDownloads,
   touchIndexEntry, reconcileIndex,
 };

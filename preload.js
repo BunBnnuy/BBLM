@@ -106,9 +106,15 @@ contextBridge.exposeInMainWorld('api', {
   scannerCancel: () => ipcRenderer.invoke('scanner-cancel'),
   scannerImportAsset: (opts) => ipcRenderer.invoke('scanner-import-asset', opts),
   scannerGetResults: () => ipcRenderer.invoke('scanner-get-results'),
+  scannerGetFolder: () => ipcRenderer.invoke('scanner-get-folder'),
   scannerSaveResults: (results) => ipcRenderer.invoke('scanner-save-results', results),
   scannerClearResults: () => ipcRenderer.invoke('scanner-clear-results'),
   onScannerProgress: (cb) => ipcRenderer.on('scanner-progress', (event, data) => cb(data)),
+  originFinderStart: () => ipcRenderer.invoke('origin-finder-start'),
+  originFinderSearchOne: (archive) => ipcRenderer.invoke('origin-finder-search-one', archive),
+  originFinderPause: () => ipcRenderer.invoke('origin-finder-pause'),
+  originFinderState: () => ipcRenderer.invoke('origin-finder-state'),
+  onOriginFinderUpdate: (cb) => ipcRenderer.on('origin-finder-update', (event, data) => cb(data)),
   // Malware scanning
   copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
   malwareScanNow: (assetIds) => ipcRenderer.invoke('malware-scan-now', assetIds),
@@ -117,4 +123,6 @@ contextBridge.exposeInMainWorld('api', {
   malwareMarkUnsafe: (assetId) => ipcRenderer.invoke('malware-mark-unsafe', assetId),
   onMalwareScanProgress: (cb) => ipcRenderer.on('malware-scan-progress', (event, data) => cb(data)),
   onMalwareScanFlagged: (cb) => ipcRenderer.on('malware-scan-flagged', (event, data) => cb(data)),
+  createShowcaseSnapshot: () => ipcRenderer.invoke('create-showcase-snapshot'),
+  publishShowcase: () => ipcRenderer.invoke('publish-showcase'),
 });

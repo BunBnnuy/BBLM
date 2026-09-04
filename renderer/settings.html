@@ -32,6 +32,25 @@
     </div>
 
     <div class="settings-section">
+      <h3>Public Showcase</h3>
+      <p style="font-size:12px; color:var(--text-dim)">Create a public catalog snapshot with card details, listed filenames, and resized JPEG previews. Adult-marked and hidden assets are excluded. Original asset files and local paths are never included.</p>
+      <div class="field" style="margin-top:12px;">
+        <label>Sites showcase URL</label>
+        <input type="url" id="showcase-publish-url" placeholder="https://your-showcase.example" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Publishing token — saved in local app settings and never added to Git</label>
+        <input type="password" id="showcase-publish-token" placeholder="Enter the private publishing token" autocomplete="new-password" />
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px;">
+        <button class="btn-secondary" id="btn-create-showcase">Create Snapshot</button>
+        <button class="btn-primary" id="btn-publish-showcase">Create &amp; Publish</button>
+        <button class="btn-ghost" id="btn-open-showcase">Open Showcase</button>
+      </div>
+      <div id="showcase-status" style="font-size:12px; color:var(--text-dim); margin-top:10px;"></div>
+    </div>
+
+    <div class="settings-section">
       <h3>Unity Import</h3>
       <p style="font-size:12px; color:var(--text-dim)">Import the companion package into any Unity project once, and it will show up here automatically whenever that project is open. Then right-click an archive asset and choose "Import to Unity" to select files and a target project.</p>
       <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
@@ -175,6 +194,8 @@
       <button class="btn-ghost" id="btn-oss" style="font-size:11px;">Open Source Licenses</button>
       <button class="btn-primary" id="btn-save">Save Settings</button>
     </div>
+
+    <div id="app-version" style="padding:18px 0 4px; text-align:center; font-size:11px; color:var(--text-dim);">Version</div>
 
     <!-- OSS Attributions modal -->
     <div id="oss-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:9000; align-items:center; justify-content:center;">

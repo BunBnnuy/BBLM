@@ -9,6 +9,8 @@ const { scanDiskEntries, readIndexFile, writeIndexFile, fastThumbnailPath } = re
 // In-memory cache of the current rootFolder's asset index, populated on first
 // getAssets() call and kept in sync via touchIndexEntry/removeIndexEntry.
 let cache = null; // { rootFolder, entries: Map<assetId, meta> }
+let savedListener = () => {};
+function onAssetSaved(listener) { savedListener = listener; }
 
 function materialize(rootFolder, entriesMap) {
   const assets = [];
@@ -20,10 +22,16 @@ function materialize(rootFolder, entriesMap) {
   return assets.sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
 }
 
-function touchIndexEntry(store, assetId, meta) {
+function touchIndexEntry(store, assetId, meta, { translationOnly = false } = {}) {
   const rootFolder = store.get('rootFolder', '');
+  if (!translationOnly) savedListener(rootFolder, assetId, meta);
+  if (translationOnly) {
+    // Invalidate the disk index instead of rewriting the entire library per title.
+    try { fs.unlinkSync(path.join(rootFolder, '.blm-index.json')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
   if (!cache || cache.rootFolder !== rootFolder) return;
   cache.entries.set(assetId, meta);
+  if (translationOnly) return;
   try { writeIndexFile(rootFolder, Object.fromEntries(cache.entries)); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
 }
 
@@ -421,4 +429,5 @@ module.exports = {
   createAssetShell, finalizeAssetDownload, appendToExistingBoothAsset,
   discardIncompleteDownload, cleanupIncompleteDownloads,
   touchIndexEntry, reconcileIndex,
+  onAssetSaved,
 };

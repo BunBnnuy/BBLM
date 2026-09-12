@@ -1,4 +1,8 @@
 const rootInput = document.getElementById('root-folder');
+const translatedTitlesToggle = document.getElementById('translated-titles-toggle');
+translatedTitlesToggle.addEventListener('click', () => {
+  setSchemeToggle(translatedTitlesToggle, translatedTitlesToggle.getAttribute('aria-checked') !== 'true');
+});
 const downloadsInput = document.getElementById('downloads-folder');
 const saveStatus = document.getElementById('save-status');
 const monitorToggle = document.getElementById('monitor-toggle');
@@ -16,6 +20,34 @@ const malwareScannerStatus = document.getElementById('malware-scanner-status');
 const showcasePublishUrl = document.getElementById('showcase-publish-url');
 const showcasePublishToken = document.getElementById('showcase-publish-token');
 const showcaseStatus = document.getElementById('showcase-status');
+const settingsTabs = Array.from(document.querySelectorAll('.settings-tab'));
+
+function selectSettingsTab(tab) {
+  settingsTabs.forEach(candidate => {
+    const selected = candidate === tab;
+    candidate.classList.toggle('active', selected);
+    candidate.setAttribute('aria-selected', String(selected));
+    candidate.tabIndex = selected ? 0 : -1;
+    const panel = document.getElementById(candidate.getAttribute('aria-controls'));
+    if (panel) panel.hidden = !selected;
+  });
+  document.querySelector('.settings-content').scrollTop = 0;
+}
+
+settingsTabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => selectSettingsTab(tab));
+  tab.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    let nextIndex = index;
+    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + settingsTabs.length) % settingsTabs.length;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % settingsTabs.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = settingsTabs.length - 1;
+    selectSettingsTab(settingsTabs[nextIndex]);
+    settingsTabs[nextIndex].focus();
+  });
+});
 
 function setToggleState(enabled) {
   monitorToggle.textContent = enabled ? 'On' : 'Off';
@@ -196,6 +228,7 @@ function safeImageUrl(value, local = false) {
 
 async function load() {
   const config = await window.api.getConfig();
+  setSchemeToggle(translatedTitlesToggle, config.translatedTitlesEnabled === true);
   document.getElementById('app-version').textContent = `Version ${config.appVersion || ''}`.trim();
   rootInput.value = config.rootFolder || '';
   downloadsInput.value = config.downloadsFolder || '';
@@ -320,6 +353,7 @@ async function loadUnityProjects() {
 document.getElementById('btn-save').addEventListener('click', async () => {
   await window.api.setConfig({
     rootFolder: rootInput.value,
+    translatedTitlesEnabled: translatedTitlesToggle.getAttribute('aria-checked') === 'true',
     downloadsFolder: downloadsInput.value,
     notificationsEnabled: notificationsToggle.getAttribute('aria-checked') === 'true',
     libraryHealthNotify: healthNotifyToggle.getAttribute('aria-checked') === 'true',
@@ -335,8 +369,13 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   setTimeout(() => { saveStatus.className = 'status'; }, 2000);
 });
 
-document.getElementById('btn-back').addEventListener('click', () => {
+function goBack() {
   window.location.href = 'index.html';
+}
+
+document.getElementById('btn-back').addEventListener('click', goBack);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.repeat) goBack();
 });
 
 const ossOverlay = document.getElementById('oss-overlay');

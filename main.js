@@ -20,6 +20,24 @@ const { createUpdatePromptOptions, shouldInstallNow } = require('./src/updatePro
 const { createShowcaseSnapshot, publishShowcaseSnapshot } = require('./src/showcaseSnapshot');
 
 const store = new Store();
+const { displayTitle, needsTranslation } = require('./src/titleTranslations');
+const { TitleTranslationThread } = require('./src/titleTranslationThread');
+const translationAssets = require('./src/assetManager');
+const titleTranslations = new TitleTranslationThread({
+  store, assets: translationAssets,
+  statePath: path.join(app.getPath('userData'), 'title-translations.json'),
+  onStatus: status => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('translation-status', status);
+  },
+  onSaved: asset => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('title-translated', {
+      id: asset.id, name: asset.name, displayName: displayTitle(asset, store.get('translatedTitlesEnabled', false)),
+    });
+  },
+});
+translationAssets.onAssetSaved((root, id, meta) => {
+  if (needsTranslation(meta.name)) titleTranslations.enqueue(root, id);
+});
 const monitor = new DownloadsMonitor(onFileDetected);
 
 autoUpdater.autoDownload = true;
@@ -553,6 +571,9 @@ if (!gotTheLock) {
     createTray();
     createMainWindow();
 
+    titleTranslations.configure();
+    app.once('before-quit', () => titleTranslations.stop());
+
     // Handle URL if app was cold-launched via a scheme (Windows passes it in argv)
     const url = process.argv.find(arg => /^(booth-library-manager|bunslm|rslimman|vroid\.closet):\/\//i.test(arg));
     if (url) handleUrl(url);
@@ -866,6 +887,7 @@ function onFileDetected(filePath) {
 
 ipcMain.handle('get-config', () => ({
   appVersion: app.getVersion(),
+  translatedTitlesEnabled: store.get('translatedTitlesEnabled', false),
   rootFolder: store.get('rootFolder', ''),
   watchedDomains: store.get('watchedDomains', []),
   downloadsFolder: store.get('downloadsFolder', app.getPath('downloads')),
@@ -883,6 +905,8 @@ ipcMain.handle('get-config', () => ({
   showcaseTokenConfigured: Boolean(store.get('showcasePublishToken', '')),
   showcaseLastPublishedAt: store.get('showcaseLastPublishedAt', ''),
 }));
+
+ipcMain.handle('get-translation-status', () => titleTranslations.status);
 
 ipcMain.handle('get-release-notes', () => {
   const version = app.getVersion();
@@ -970,6 +994,7 @@ ipcMain.handle('get-booth-items', () => {
 });
 
 ipcMain.handle('set-config', (event, config) => {
+  if (typeof config.translatedTitlesEnabled === 'boolean') store.set('translatedTitlesEnabled', config.translatedTitlesEnabled);
   if (config.rootFolder !== undefined) store.set('rootFolder', config.rootFolder);
   if (config.watchedDomains !== undefined) store.set('watchedDomains', config.watchedDomains);
   if (config.downloadsFolder !== undefined) store.set('downloadsFolder', config.downloadsFolder);
@@ -982,6 +1007,7 @@ ipcMain.handle('set-config', (event, config) => {
   if (config.malwareBacklogScanEnabled !== undefined) store.set('malwareBacklogScanEnabled', config.malwareBacklogScanEnabled);
   if (typeof config.showcasePublishUrl === 'string') store.set('showcasePublishUrl', config.showcasePublishUrl.trim().slice(0, 2048));
   if (typeof config.showcasePublishToken === 'string' && config.showcasePublishToken.trim()) store.set('showcasePublishToken', config.showcasePublishToken.trim());
+  titleTranslations.configure();
   return true;
 });
 
@@ -1083,7 +1109,8 @@ ipcMain.handle('pick-folder', async () => {
 ipcMain.handle('get-assets', () => {
   const { getAssets } = require('./src/assetManager');
   const hidden = store.get('hiddenAssets', []);
-  return getAssets(store).filter(a => !hidden.includes(a.id) && !a.freeItemPending);
+  return getAssets(store).filter(a => !hidden.includes(a.id) && !a.freeItemPending)
+    .map(a => ({ ...a, displayName: displayTitle(a, store.get('translatedTitlesEnabled', false)) }));
 });
 
 ipcMain.handle('hide-asset', (event, assetId) => {

@@ -539,7 +539,7 @@ async function loadLibrary(filter = '') {
   all.forEach(a => { const s = a.scanStatus || 'untested'; allThreatCounts[s] = (allThreatCounts[s] || 0) + 1; });
 
   let filtered = filter
-    ? all.filter(a => a.name.toLowerCase().includes(filter.toLowerCase()) || (a.id || '').toLowerCase().includes(filter.toLowerCase()))
+    ? all.filter(a => `${a.name} ${a.displayName || ''}`.toLowerCase().includes(filter.toLowerCase()) || (a.id || '').toLowerCase().includes(filter.toLowerCase()))
     : all;
 
   // Apply tag filter (all selected tags must match — AND logic)
@@ -563,7 +563,7 @@ async function loadLibrary(filter = '') {
   }
 
   if (sortMode === 'alpha') {
-    filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+    filtered = [...filtered].sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name));
   } else {
     filtered = [...filtered].sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
   }
@@ -673,7 +673,7 @@ async function loadLibrary(filter = '') {
         ${pendingOverlay}
       </div>
       <div class="asset-info">
-        <div class="asset-name">${escHtml(asset.name)}</div>
+        <div class="asset-name" title="${escHtml(asset.name)}">${escHtml(asset.displayName || asset.name)}</div>
         ${tagHtml}
         <div class="asset-date">${date}${scanDotHtml}</div>
       </div>`;
@@ -1130,6 +1130,25 @@ async function scanAssetsForMalware(assetIds) {
 // ── Scan progress bar (footer) ───────────────────────────────────────────────
 const scanProgress = document.getElementById('scan-progress');
 const scanLabel    = document.getElementById('scan-label');
+const translationStatus = document.getElementById('translation-status');
+function showTranslationStatus(status) {
+  const text = status.state === 'translating' ? `Translating item ${status.item}`
+    : status.state === 'paused' ? `Translations paused. Retry after ${new Date(status.retryAt).toLocaleString()}`
+      : status.state === 'error' ? 'Translation worker stopped. Restart the app to retry.' : '';
+  translationStatus.textContent = text;
+  translationStatus.title = text;
+  translationStatus.style.display = text ? 'block' : 'none';
+}
+window.api.getTranslationStatus().then(showTranslationStatus);
+window.api.onTranslationStatus(showTranslationStatus);
+window.api.onTitleTranslated(({ id, name, displayName }) => {
+  // Update only the visible title. Do not reload all cards or their thumbnails.
+  for (const card of grid.querySelectorAll('.asset-card')) {
+    if (card.dataset.assetId !== id) continue;
+    const title = card.querySelector('.asset-name');
+    if (title) { title.textContent = displayName; title.title = name; }
+  }
+});
 
 window.api.onMalwareScanProgress(({ active, label }) => {
   if (!active) { scanProgress.style.display = 'none'; return; }

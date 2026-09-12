@@ -1172,18 +1172,105 @@ button.scan-dot:hover { outline: 2px solid var(--border); outline-offset: 2px; }
 
 /* ── Settings page ── */
 .settings-body {
-  padding: 32px;
-  max-width: 600px;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  overflow-y: auto;
   height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 16px 24px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 .settings-title { font-size: 20px; font-weight: 700; }
-.settings-section { display: flex; flex-direction: column; gap: 12px; }
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 10px 24px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.settings-tab {
+  padding: 8px 18px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.settings-tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.settings-tab.active { color: var(--text); border-bottom-color: var(--accent); background: var(--bg); }
+.settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+.settings-tab-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+  gap: 20px;
+  align-items: start;
+  width: 100%;
+}
+.settings-tab-panel[hidden] { display: none; }
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.settings-section--wide { grid-column: 1 / -1; }
 .settings-section h3 { font-size: 14px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.settings-section p,
+.settings-help,
+.settings-list > span { font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.settings-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.settings-toggle-row { display: flex; align-items: center; gap: 12px; min-height: 34px; }
+.settings-toggle-row label { flex: 1; margin: 0; color: var(--text); cursor: pointer; }
+.settings-toggle-row button[role="switch"] { min-width: 56px; }
+.settings-scheme-list { display: flex; flex-direction: column; gap: 10px; }
+.settings-scheme-list code { background: var(--surface2); padding: 2px 7px; border-radius: 4px; font-size: 12px; }
+.settings-options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 18px; }
+.settings-options-grid > div { display: flex; flex-direction: column; gap: 10px; }
+.settings-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.settings-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  min-height: 62px;
+  padding: 12px 24px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 24px rgba(0,0,0,.18);
+}
+.settings-footer #btn-save { grid-column: 3; justify-self: end; min-width: 132px; }
+.settings-version { grid-column: 2; text-align: center; font-size: 11px; color: var(--text-dim); }
+.settings-save-status { grid-column: 1; justify-self: start; max-width: 100%; }
+@media (max-width: 620px) {
+  .settings-header, .settings-content, .settings-footer { padding-left: 14px; padding-right: 14px; }
+  .settings-tabs { padding-left: 14px; padding-right: 14px; }
+  .settings-footer { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+  .settings-version { display: none; }
+  .settings-save-status { grid-column: 1; }
+  .settings-footer #btn-save { grid-column: 2; }
+}
 .release-notes-overlay { position: fixed; inset: 0; z-index: 9500; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .release-notes-modal { width: min(620px, 100%); max-height: min(720px, 90vh); display: flex; flex-direction: column; gap: 16px; padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 16px 50px rgba(0,0,0,.5); }
 .release-notes-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }

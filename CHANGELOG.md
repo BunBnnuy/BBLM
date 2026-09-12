@@ -6,6 +6,25 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.0] — 2026-09-11
+
+### Added
+
+- **English title translations** — an optional Settings control translates Japanese library titles through MyMemory. Original titles are kept, and saved translations are reused across items and app restarts. Search accepts original and displayed titles, and alphabetical sorting uses the displayed title.
+- **Background translation queue** — titles are processed one at a time in a worker thread. A local daily character budget, title length limit, and saved retry delays limit requests. The footer shows the active title or the next retry time.
+
+### Changed
+
+- Settings now has General, Integrations, Safety, and About tabs. The layout adapts to the window width, and the Back and Save controls stay visible while the content scrolls.
+- Settings tabs support the arrow, Home, and End keys. Press Escape to return to the library.
+- Completed translations update visible card titles without reloading the library or its thumbnails. Hover over a title to see the original name.
+
+### Security
+
+- Updated compatible dependencies, including Electron, Sharp, js-yaml, and the build tools, to resolve the issues reported by the dependency audit.
+
+---
+
 ## [1.5.0] — 2026-09-04
 
 ### Added

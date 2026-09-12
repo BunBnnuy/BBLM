@@ -8,174 +8,197 @@
 </head>
 <body>
   <div class="settings-body">
-    <div style="display:flex; align-items:center; gap:12px;">
+    <header class="settings-header">
       <button class="btn-ghost" id="btn-back">← Back</button>
       <div class="settings-title">Settings</div>
-    </div>
+    </header>
 
-    <div class="settings-section">
-      <h3>Library</h3>
-      <div class="field">
-        <label>Root Folder — all assets will be organized here</label>
-        <div class="field-row">
-          <input type="text" id="root-folder" readonly placeholder="Click to choose…" />
-          <button class="btn-secondary" id="btn-pick-root">Browse</button>
+    <nav class="settings-tabs" role="tablist" aria-label="Settings categories">
+      <button class="settings-tab active" id="settings-tab-general" role="tab" aria-selected="true" aria-controls="settings-panel-general" tabindex="0">General</button>
+      <button class="settings-tab" id="settings-tab-integrations" role="tab" aria-selected="false" aria-controls="settings-panel-integrations" tabindex="-1">Integrations</button>
+      <button class="settings-tab" id="settings-tab-safety" role="tab" aria-selected="false" aria-controls="settings-panel-safety" tabindex="-1">Safety</button>
+      <button class="settings-tab" id="settings-tab-about" role="tab" aria-selected="false" aria-controls="settings-panel-about" tabindex="-1">About</button>
+    </nav>
+
+    <main class="settings-content">
+      <section class="settings-tab-panel" id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general">
+        <div class="settings-section">
+          <h3>Library</h3>
+          <div class="field">
+            <label>Root Folder — all assets will be organized here</label>
+            <div class="field-row">
+              <input type="text" id="root-folder" readonly placeholder="Click to choose…" />
+              <button class="btn-secondary" id="btn-pick-root">Browse</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Downloads Folder — where your browser saves files</label>
+            <div class="field-row">
+              <input type="text" id="downloads-folder" readonly placeholder="Click to choose…" />
+              <button class="btn-secondary" id="btn-pick-downloads">Browse</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label>Downloads Folder — where your browser saves files</label>
-        <div class="field-row">
-          <input type="text" id="downloads-folder" readonly placeholder="Click to choose…" />
-          <button class="btn-secondary" id="btn-pick-downloads">Browse</button>
+
+        <div class="settings-section">
+          <h3>Title Translations</h3>
+          <p>Show English translations of Japanese item titles. MyMemory receives only the title. Translations are saved with each item. Existing saved items are processed one at a time. Original titles are kept.</p>
+          <div class="settings-toggle-row">
+            <label for="translated-titles-toggle">English titles</label>
+            <button id="translated-titles-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+          </div>
+          <p>Free use is limited to 5,000 characters per day. Titles over 500 UTF-8 bytes are skipped. Save settings to apply. Turn this off to show original titles and stop new requests.</p>
         </div>
-      </div>
-    </div>
 
-    <div class="settings-section">
-      <h3>Public Showcase</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Create a public catalog snapshot with card details, listed filenames, and resized JPEG previews. Adult-marked and hidden assets are excluded. Original asset files and local paths are never included.</p>
-      <div class="field" style="margin-top:12px;">
-        <label>Sites showcase URL</label>
-        <input type="url" id="showcase-publish-url" placeholder="https://your-showcase.example" autocomplete="off" />
-      </div>
-      <div class="field">
-        <label>Publishing token — saved in local app settings and never added to Git</label>
-        <input type="password" id="showcase-publish-token" placeholder="Enter the private publishing token" autocomplete="new-password" />
-      </div>
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px;">
-        <button class="btn-secondary" id="btn-create-showcase">Create Snapshot</button>
-        <button class="btn-primary" id="btn-publish-showcase">Create &amp; Publish</button>
-        <button class="btn-ghost" id="btn-open-showcase">Open Showcase</button>
-      </div>
-      <div id="showcase-status" style="font-size:12px; color:var(--text-dim); margin-top:10px;"></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Unity Import</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Import the companion package into any Unity project once, and it will show up here automatically whenever that project is open. Then right-click an archive asset and choose "Import to Unity" to select files and a target project.</p>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
-        <button class="btn-secondary" id="btn-reveal-unity-companion">📂 Get Companion Package</button>
-        <span style="font-size:12px; color:var(--text-dim);">Import BBLM_Importer.unitypackage into your project once.</span>
-      </div>
-      <div class="field" style="margin-top:12px;">
-        <label>Currently detected open Unity projects</label>
-        <div id="unity-projects-list" style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
-          <span style="font-size:12px; color:var(--text-dim)" id="unity-projects-empty">None detected. Open a project with the companion package installed.</span>
+        <div class="settings-section settings-section--wide">
+          <h3>Hidden Assets</h3>
+          <p>Assets you've hidden from the library. Click Unhide to restore them.</p>
+          <div id="hidden-list" class="settings-list">
+            <span id="hidden-empty">No hidden assets.</span>
+          </div>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <div class="settings-section">
-      <h3>Notifications</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Show desktop notifications when downloads complete or fail.</p>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
-        <label class="toggle-label" for="notifications-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
-          Desktop notifications
-        </label>
-        <button id="notifications-toggle" class="btn-ghost" role="switch" aria-checked="true" style="min-width:56px;">On</button>
-      </div>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
-        <label class="toggle-label" for="health-notify-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
-          Notify on library health-check changes
-        </label>
-        <button id="health-notify-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Downloads Monitor</h3>
-      <p style="font-size:12px; color:var(--text-dim)">When enabled, BB's LibMan watches your downloads folder and shows a notification when a 3D asset or archive finishes downloading.</p>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
-        <label class="toggle-label" for="monitor-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
-          Monitor downloads folder
-        </label>
-        <button id="monitor-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
-      </div>
-    </div>
-
-
-    <div class="settings-section">
-      <h3>Malware Scanning</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Scans imported .unitypackage files (and .zip/.rar/.7z archives that contain them) with the <a href="#" id="scanner-attribution-link" class="footer-link">vrchat-scanner</a> CLI in the background after import.</p>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
-        <label class="toggle-label" for="malware-scan-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
-          Scan imported assets
-        </label>
-        <button id="malware-scan-toggle" class="btn-ghost" role="switch" aria-checked="true" style="min-width:56px;">On</button>
-      </div>
-      <p style="font-size:12px; color:var(--text-dim); margin-top:10px;">Also scan assets already in your library that haven't been checked yet — one at a time, only after the computer has been idle for a few minutes, so it never competes with what you're doing.</p>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
-        <label class="toggle-label" for="malware-backlog-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
-          Scan existing library when idle
-        </label>
-        <button id="malware-backlog-toggle" class="btn-ghost" role="switch" aria-checked="true" style="min-width:56px;">On</button>
-      </div>
-      <div class="field" style="margin-top:10px;">
-        <label>Scanner status (managed automatically, not editable)</label>
-        <input type="text" id="malware-scanner-status" readonly />
-      </div>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:10px;">
-        <button class="btn-secondary" id="btn-malware-scan-all">🛡️ Scan All Assets Now</button>
-        <span id="malware-scan-all-status" style="font-size:12px; color:var(--text-dim);"></span>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Booth Library Manager</h3>
-      <p style="font-size:12px; color:var(--text-dim)">When enabled, items from your local Booth Library Manager database are shown in the library alongside your own assets.</p>
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
-        <label class="toggle-label" for="booth-toggle" style="margin:0; font-size:13px; color:var(--text); cursor:pointer;">
-          Include Booth library manager
-        </label>
-        <button id="booth-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
-      </div>
-      <div class="field" id="booth-folder-field" style="display:none;">
-        <label>Booth LM download folder</label>
-        <div class="field-row">
-          <input type="text" id="booth-downloads-folder" readonly placeholder="Click to choose…" />
-          <button class="btn-secondary" id="btn-pick-booth-downloads">Browse</button>
+      <section class="settings-tab-panel" id="settings-panel-integrations" role="tabpanel" aria-labelledby="settings-tab-integrations" hidden>
+        <div class="settings-section">
+          <h3>Public Showcase</h3>
+          <p>Create a public catalog snapshot with card details, listed filenames, and resized JPEG previews. Adult-marked and hidden assets are excluded. Original asset files and local paths are never included.</p>
+          <div class="field">
+            <label>Sites showcase URL</label>
+            <input type="url" id="showcase-publish-url" placeholder="https://your-showcase.example" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>Publishing token — saved in local app settings and never added to Git</label>
+            <input type="password" id="showcase-publish-token" placeholder="Enter the private publishing token" autocomplete="new-password" />
+          </div>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="btn-create-showcase">Create Snapshot</button>
+            <button class="btn-primary" id="btn-publish-showcase">Create &amp; Publish</button>
+            <button class="btn-ghost" id="btn-open-showcase">Open Showcase</button>
+          </div>
+          <div id="showcase-status" class="settings-help"></div>
         </div>
-      </div>
-    </div>
 
-    <div class="settings-section">
-      <h3>URL Schemes</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Register BB's LibMan as the default handler for custom URL protocols. Other apps (like Booth Library Manager) can then launch and interact with this app via these links.</p>
-      <div style="display:flex; flex-direction:column; gap:10px; margin-top:8px;">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <label style="margin:0; font-size:13px; color:var(--text); flex:1; cursor:pointer;" for="scheme-booth-toggle">
-            <code style="background:var(--surface2); padding:1px 6px; border-radius:4px; font-size:12px;">booth-library-manager://</code>
-          </label>
-          <button id="scheme-booth-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
+        <div class="settings-section">
+          <h3>Unity Import</h3>
+          <p>Import the companion package into any Unity project once, and it will show up here automatically whenever that project is open. Then right-click an archive asset and choose "Import to Unity" to select files and a target project.</p>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="btn-reveal-unity-companion">📂 Get Companion Package</button>
+            <span class="settings-help">Import BBLM_Importer.unitypackage into your project once.</span>
+          </div>
+          <div class="field">
+            <label>Currently detected open Unity projects</label>
+            <div id="unity-projects-list" class="settings-list">
+              <span id="unity-projects-empty">None detected. Open a project with the companion package installed.</span>
+            </div>
+          </div>
         </div>
-        <div style="display:flex; align-items:center; gap:12px;">
-          <label style="margin:0; font-size:13px; color:var(--text); flex:1; cursor:pointer;" for="scheme-buns-toggle">
-            <code style="background:var(--surface2); padding:1px 6px; border-radius:4px; font-size:12px;">BunsLM://</code>
-          </label>
-          <button id="scheme-buns-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
-        </div>
-        <div style="display:flex; align-items:center; gap:12px;">
-          <label style="margin:0; font-size:13px; color:var(--text); flex:1; cursor:pointer;" for="scheme-vroid-toggle">
-            <code style="background:var(--surface2); padding:1px 6px; border-radius:4px; font-size:12px;">vroid.closet://</code>
-          </label>
-          <button id="scheme-vroid-toggle" class="btn-ghost" role="switch" aria-checked="false" style="min-width:56px;">Off</button>
-        </div>
-      </div>
-    </div>
 
-    <div class="settings-section">
-      <h3>About</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Review the changes included in the currently installed version.</p>
-      <button class="btn-secondary" id="btn-show-release-notes">Show Release Notes</button>
-    </div>
+        <div class="settings-section">
+          <h3>Booth Library Manager</h3>
+          <p>When enabled, items from your local Booth Library Manager database are shown in the library alongside your own assets.</p>
+          <div class="settings-toggle-row">
+            <label for="booth-toggle">Include Booth library manager</label>
+            <button id="booth-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+          </div>
+          <div class="field" id="booth-folder-field" style="display:none;">
+            <label>Booth LM download folder</label>
+            <div class="field-row">
+              <input type="text" id="booth-downloads-folder" readonly placeholder="Click to choose…" />
+              <button class="btn-secondary" id="btn-pick-booth-downloads">Browse</button>
+            </div>
+          </div>
+        </div>
 
-    <div class="settings-section">
-      <h3>Hidden Assets</h3>
-      <p style="font-size:12px; color:var(--text-dim)">Assets you've hidden from the library. Click Unhide to restore them.</p>
-      <div id="hidden-list" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
-        <span style="font-size:12px; color:var(--text-dim)" id="hidden-empty">No hidden assets.</span>
-      </div>
-    </div>
+        <div class="settings-section">
+          <h3>URL Schemes</h3>
+          <p>Register BB's LibMan as the default handler for custom URL protocols. Other apps can then launch and interact with this app through these links.</p>
+          <div class="settings-scheme-list">
+            <div class="settings-toggle-row">
+              <label for="scheme-booth-toggle"><code>booth-library-manager://</code></label>
+              <button id="scheme-booth-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+            </div>
+            <div class="settings-toggle-row">
+              <label for="scheme-buns-toggle"><code>BunsLM://</code></label>
+              <button id="scheme-buns-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+            </div>
+            <div class="settings-toggle-row">
+              <label for="scheme-vroid-toggle"><code>vroid.closet://</code></label>
+              <button id="scheme-vroid-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-tab-panel" id="settings-panel-safety" role="tabpanel" aria-labelledby="settings-tab-safety" hidden>
+        <div class="settings-section">
+          <h3>Notifications</h3>
+          <p>Show desktop notifications when downloads complete or fail.</p>
+          <div class="settings-toggle-row">
+            <label for="notifications-toggle">Desktop notifications</label>
+            <button id="notifications-toggle" class="btn-ghost" role="switch" aria-checked="true">On</button>
+          </div>
+          <div class="settings-toggle-row">
+            <label for="health-notify-toggle">Notify on library health-check changes</label>
+            <button id="health-notify-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Downloads Monitor</h3>
+          <p>When enabled, BB's LibMan watches your downloads folder and shows a notification when a 3D asset or archive finishes downloading.</p>
+          <div class="settings-toggle-row">
+            <label for="monitor-toggle">Monitor downloads folder</label>
+            <button id="monitor-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+          </div>
+        </div>
+
+        <div class="settings-section settings-section--wide">
+          <h3>Malware Scanning</h3>
+          <p>Scans imported .unitypackage files and archives that contain them with the <a href="#" id="scanner-attribution-link" class="footer-link">vrchat-scanner</a> CLI in the background after import.</p>
+          <div class="settings-options-grid">
+            <div>
+              <div class="settings-toggle-row">
+                <label for="malware-scan-toggle">Scan imported assets</label>
+                <button id="malware-scan-toggle" class="btn-ghost" role="switch" aria-checked="true">On</button>
+              </div>
+            </div>
+            <div>
+              <p>Also scan assets already in your library that have not been checked. Scans run one at a time after the computer has been idle for a few minutes.</p>
+              <div class="settings-toggle-row">
+                <label for="malware-backlog-toggle">Scan existing library when idle</label>
+                <button id="malware-backlog-toggle" class="btn-ghost" role="switch" aria-checked="true">On</button>
+              </div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Scanner status (managed automatically, not editable)</label>
+            <input type="text" id="malware-scanner-status" readonly />
+          </div>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="btn-malware-scan-all">🛡️ Scan All Assets Now</button>
+            <span id="malware-scan-all-status" class="settings-help"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-tab-panel" id="settings-panel-about" role="tabpanel" aria-labelledby="settings-tab-about" hidden>
+        <div class="settings-section">
+          <h3>About</h3>
+          <p>Review the changes included in the currently installed version.</p>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="btn-show-release-notes">Show Release Notes</button>
+            <button class="btn-ghost" id="btn-oss">Open Source Licenses</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="settings-footer">
+      <div id="save-status" class="status settings-save-status" aria-live="polite"></div>
+      <div id="app-version" class="settings-version">Version</div>
+      <button class="btn-primary" id="btn-save">Save Settings</button>
+    </footer>
 
     <div id="release-notes-overlay" class="release-notes-overlay" style="display:none;">
       <div class="release-notes-modal" role="dialog" aria-modal="true" aria-labelledby="release-notes-title">
@@ -188,16 +211,6 @@
       </div>
     </div>
 
-<div id="save-status" class="status"></div>
-
-    <div style="display:flex; gap:8px; justify-content:space-between; align-items:center;">
-      <button class="btn-ghost" id="btn-oss" style="font-size:11px;">Open Source Licenses</button>
-      <button class="btn-primary" id="btn-save">Save Settings</button>
-    </div>
-
-    <div id="app-version" style="padding:18px 0 4px; text-align:center; font-size:11px; color:var(--text-dim);">Version</div>
-
-    <!-- OSS Attributions modal -->
     <div id="oss-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:9000; align-items:center; justify-content:center;">
       <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); width:520px; max-height:70vh; display:flex; flex-direction:column; padding:24px; gap:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">

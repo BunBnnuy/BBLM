@@ -771,6 +771,7 @@ async function loadLibrary(filter = '') {
           { label: '🛡️  Scan for Malware', action: () => scanAssetsForMalware([asset.id]) },
           hasUnityPackage ? { label: '🎮  Add to project', action: () => importAssetToUnity(asset) } : null,
           'separator',
+          (typeof window !== 'undefined' && window.__BBLM_WEB__) ? null : // Web view is read-only: no delete.
           { label: '🗑  Delete', danger: true, action: async () => {
               if (!confirm(`Delete "${asset.name}" and all its files? This cannot be undone.`)) return;
               await window.api.deleteAsset(asset.id);
@@ -797,6 +798,16 @@ function escHtml(str) {
 
 function safeImageUrl(value, local = false) {
   if (typeof value !== 'string' || value.length > 4096) return '';
+  // Web mode serves thumbs over HTTP at /api/thumbs/<id>.
+  if (typeof window !== 'undefined' && window.__BBLM_WEB__) {
+    if (value.startsWith('/api/thumbs/')) return value;
+    try {
+      const u = new URL(value, window.location.origin);
+      if (u.pathname.startsWith('/api/thumbs/') && (u.protocol === 'http:' || u.protocol === 'https:')) return u.pathname;
+      if (u.protocol === 'https:') return value;
+      return '';
+    } catch { return ''; }
+  }
   if (local) return value ? `file://${value.replace(/\\/g, '/')}` : '';
   try { return new URL(value).protocol === 'https:' ? value : ''; } catch { return ''; }
 }

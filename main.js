@@ -18,6 +18,7 @@ const { removeScannerResult } = require('./src/scannerResults');
 const { autoSelectedCandidate, extractBoothEvidence, initialOrigin, searchBooth } = require('./src/boothOriginFinder');
 const { createUpdatePromptOptions, shouldInstallNow } = require('./src/updatePrompt');
 const { createShowcaseSnapshot, publishShowcaseSnapshot } = require('./src/showcaseSnapshot');
+const { LibraryWebServer, DEFAULT_PORT, normalizePort } = require('./src/webServer');
 
 const store = new Store();
 const { displayTitle, needsTranslation } = require('./src/titleTranslations');
@@ -77,6 +78,7 @@ console.log('[main] gotTheLock:', gotTheLock);
 let mainWindow = null;
 let modalWindow = null;
 let tray = null;
+let webServer = null;
 let freeItemsTimer = null;
 let freeItemsScanCancelled = false;
 let updatePromptShown = false;
@@ -574,6 +576,13 @@ if (!gotTheLock) {
     titleTranslations.configure();
     app.once('before-quit', () => titleTranslations.stop());
 
+    // Silent, opt-in web server. Off unless Remote Access was enabled.
+    if (store.get('webServerEnabled', false)) {
+      ensureWebServer().start().catch(err => {
+        logger.warn('web-server-start-failed', { message: err.message });
+      });
+    }
+
     // Handle URL if app was cold-launched via a scheme (Windows passes it in argv)
     const url = process.argv.find(arg => /^(booth-library-manager|bunslm|rslimman|vroid\.closet):\/\//i.test(arg));
     if (url) handleUrl(url);
@@ -599,6 +608,7 @@ if (!gotTheLock) {
   });
 
   app.on('before-quit', () => { app.isQuitting = true; });
+  app.on('will-quit', () => { if (webServer) webServer.stop(); });
   app.on('quit', () => { monitor.stop(); if (backlogScanTimer) clearInterval(backlogScanTimer); });
 }
 
@@ -885,6 +895,16 @@ function onFileDetected(filePath) {
 
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
+function ensureWebServer() {
+  if (!webServer) {
+    webServer = new LibraryWebServer({
+      store,
+      configPath: path.join(app.getPath('userData'), 'bblm-web-config.json'),
+    });
+  }
+  return webServer;
+}
+
 ipcMain.handle('get-config', () => ({
   appVersion: app.getVersion(),
   translatedTitlesEnabled: store.get('translatedTitlesEnabled', false),
@@ -904,6 +924,9 @@ ipcMain.handle('get-config', () => ({
   showcasePublishUrl: store.get('showcasePublishUrl', ''),
   showcaseTokenConfigured: Boolean(store.get('showcasePublishToken', '')),
   showcaseLastPublishedAt: store.get('showcaseLastPublishedAt', ''),
+  webServerEnabled: store.get('webServerEnabled', false),
+  webServerPort: normalizePort(store.get('webServerPort', DEFAULT_PORT)),
+  webServerTokenConfigured: Boolean(store.get('webServerToken', '')),
 }));
 
 ipcMain.handle('get-translation-status', () => titleTranslations.status);
@@ -1008,6 +1031,30 @@ ipcMain.handle('set-config', (event, config) => {
   if (typeof config.showcasePublishUrl === 'string') store.set('showcasePublishUrl', config.showcasePublishUrl.trim().slice(0, 2048));
   if (typeof config.showcasePublishToken === 'string' && config.showcasePublishToken.trim()) store.set('showcasePublishToken', config.showcasePublishToken.trim());
   titleTranslations.configure();
+  return true;
+});
+
+ipcMain.handle('get-web-server-status', () => ensureWebServer().status());
+
+ipcMain.handle('set-web-server', async (event, config = {}) => {
+  if (typeof config.enabled === 'boolean') store.set('webServerEnabled', config.enabled);
+  if (config.port !== undefined) {
+    const port = Number(config.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { ok: false, error: 'Enter a port between 1 and 65535.' };
+    }
+    store.set('webServerPort', port);
+  }
+  if (typeof config.token === 'string') store.set('webServerToken', config.token.trim().slice(0, 200));
+  const status = await ensureWebServer().apply();
+  return { ok: !status.error, ...status };
+});
+
+ipcMain.handle('open-web-library', async () => {
+  const status = ensureWebServer().status();
+  const token = store.get('webServerToken', '');
+  const url = `http://localhost:${status.port}/${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  await shell.openExternal(url);
   return true;
 });
 

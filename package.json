@@ -1,11 +1,15 @@
 {
   "name": "bbs-libman",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "BB's Library Manager for 3D model and game asset downloads",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --inspect=5858",
+    "dev": "node scripts/dev.js",
+    "dev:electron": "electron . --inspect=5858",
+    "dev:web": "node scripts/dev.js --web-only",
+    "web": "node server.js --port 47823",
+    "web:public": "node server.js --host 0.0.0.0 --port 80",
     "build": "electron-builder",
     "test": "node --test",
     "lint": "eslint .",
@@ -21,7 +25,9 @@
       "!AGENTS.md",
       "!.claude{,/**/*}",
       "!test{,/**/*}",
-      "!plan.md"
+      "!plan.md",
+      "!scripts{,/**/*}",
+      "!data{,/**/*}"
     ],
     "win": {
       "target": "nsis",
@@ -38,14 +44,14 @@
   "license": "MIT",
   "type": "commonjs",
   "overrides": {
-    "fast-uri": "^4.1.4",
-    "undici": "^8.10.0"
+    "fast-uri": "^4.2.3",
+    "undici": "^8.12.3"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
-    "sharp": "^0.35.0",
+    "sharp": "^0.35.5",
     "sql.js": "^1.14.1"
   },
   "devDependencies": {

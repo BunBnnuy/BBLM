@@ -34,5 +34,8 @@ desktop.ini
 downloads/
 _temp_downloads/
 
+# BBLM web mode local config and data
+data/
+
 # Claude Code
 .claude/

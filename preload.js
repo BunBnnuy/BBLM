@@ -128,4 +128,7 @@ contextBridge.exposeInMainWorld('api', {
   onMalwareScanFlagged: (cb) => ipcRenderer.on('malware-scan-flagged', (event, data) => cb(data)),
   createShowcaseSnapshot: () => ipcRenderer.invoke('create-showcase-snapshot'),
   publishShowcase: () => ipcRenderer.invoke('publish-showcase'),
+  getWebServerStatus: () => ipcRenderer.invoke('get-web-server-status'),
+  setWebServer: (config) => ipcRenderer.invoke('set-web-server', config),
+  openWebLibrary: () => ipcRenderer.invoke('open-web-library'),
 });

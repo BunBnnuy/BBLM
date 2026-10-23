@@ -20,6 +20,12 @@ const malwareScannerStatus = document.getElementById('malware-scanner-status');
 const showcasePublishUrl = document.getElementById('showcase-publish-url');
 const showcasePublishToken = document.getElementById('showcase-publish-token');
 const showcaseStatus = document.getElementById('showcase-status');
+const webServerToggle = document.getElementById('web-server-toggle');
+const webServerPort = document.getElementById('web-server-port');
+const webServerToken = document.getElementById('web-server-token');
+const webServerStatus = document.getElementById('web-server-status');
+const clearWebTokenButton = document.getElementById('btn-clear-web-token');
+const openWebLibraryButton = document.getElementById('btn-open-web-library');
 const settingsTabs = Array.from(document.querySelectorAll('.settings-tab'));
 
 function selectSettingsTab(tab) {
@@ -99,6 +105,43 @@ function setBoothToggleState(enabled) {
   boothFolderField.style.display = enabled ? 'block' : 'none';
 }
 
+function readWebServerPort() {
+  const port = Number(webServerPort.value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return port;
+}
+
+function renderWebServerStatus(status) {
+  setSchemeToggle(webServerToggle, status.enabled === true);
+  openWebLibraryButton.disabled = status.running !== true;
+  if (status.running) {
+    const urls = (status.urls || []).join('   •   ');
+    webServerStatus.textContent = status.tokenConfigured
+      ? `Running: ${urls} — add ?token=… to the address.`
+      : `Running: ${urls}`;
+    webServerStatus.style.color = '';
+  } else if (status.error) {
+    webServerStatus.textContent = status.error;
+    webServerStatus.style.color = 'var(--accent)';
+  } else {
+    webServerStatus.textContent = 'Server is off.';
+    webServerStatus.style.color = '';
+  }
+}
+
+// Remote access is owned by the desktop app, so browsers only show its state.
+function applyWebModeLock() {
+  if (!window.__BBLM_WEB__) return;
+  webServerStatus.textContent = 'Managed by the desktop app. Remote access cannot be changed from the browser.';
+  webServerStatus.style.color = '';
+  webServerToggle.disabled = true;
+  webServerPort.disabled = true;
+  webServerToken.disabled = true;
+  clearWebTokenButton.disabled = true;
+  openWebLibraryButton.disabled = true;
+}
+
+
 notificationsToggle.addEventListener('click', () => {
   const next = notificationsToggle.getAttribute('aria-checked') !== 'true';
   setNotificationsToggle(next);
@@ -169,6 +212,43 @@ schemeVroidToggle.addEventListener('click', async () => {
   const next = !current;
   await window.api.setScheme('vroid.closet', next);
   setSchemeToggle(schemeVroidToggle, next);
+});
+
+webServerToggle.addEventListener('click', async () => {
+  const enable = webServerToggle.getAttribute('aria-checked') !== 'true';
+  const port = readWebServerPort();
+  if (port === null) {
+    webServerStatus.textContent = 'Enter a port between 1 and 65535.';
+    webServerStatus.style.color = 'var(--accent)';
+    return;
+  }
+  webServerToggle.disabled = true;
+  webServerStatus.style.color = '';
+  webServerStatus.textContent = enable ? 'Starting…' : 'Stopping…';
+  try {
+    const status = await window.api.setWebServer({ enabled: enable, port });
+    webServerPort.value = String(status.port);
+    renderWebServerStatus(status);
+  } catch (error) {
+    webServerStatus.textContent = `Could not change the server: ${error.message}`;
+    webServerStatus.style.color = 'var(--accent)';
+  } finally {
+    webServerToggle.disabled = false;
+  }
+});
+
+clearWebTokenButton.addEventListener('click', async () => {
+  const status = await window.api.setWebServer({ token: '' });
+  webServerToken.value = '';
+  webServerToken.placeholder = status.tokenConfigured
+    ? 'Access token is configured — leave blank to keep it'
+    : 'No access token';
+  clearWebTokenButton.disabled = !status.tokenConfigured;
+  renderWebServerStatus(status);
+});
+
+openWebLibraryButton.addEventListener('click', () => {
+  window.api.openWebLibrary();
 });
 
 async function loadHiddenAssets() {
@@ -256,6 +336,16 @@ async function load() {
   setSchemeToggle(schemeBoothToggle, schemes['booth-library-manager'] || false);
   setSchemeToggle(schemeBunsToggle, schemes['BunsLM'] || false);
   setSchemeToggle(schemeVroidToggle, schemes['vroid.closet'] || false);
+
+  const webStatus = await window.api.getWebServerStatus();
+  webServerPort.value = String(webStatus.port);
+  webServerToken.value = '';
+  webServerToken.placeholder = webStatus.tokenConfigured
+    ? 'Access token is configured — leave blank to keep it'
+    : 'No access token';
+  clearWebTokenButton.disabled = !webStatus.tokenConfigured;
+  renderWebServerStatus(webStatus);
+  applyWebModeLock();
 
   loadHiddenAssets();
   loadUnityProjects();
@@ -351,6 +441,13 @@ async function loadUnityProjects() {
 }
 
 document.getElementById('btn-save').addEventListener('click', async () => {
+  const webPort = readWebServerPort();
+  if (webPort === null) {
+    saveStatus.textContent = 'Enter a web server port between 1 and 65535.';
+    saveStatus.className = 'status error';
+    return;
+  }
+
   await window.api.setConfig({
     rootFolder: rootInput.value,
     translatedTitlesEnabled: translatedTitlesToggle.getAttribute('aria-checked') === 'true',
@@ -364,6 +461,28 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     showcasePublishUrl: showcasePublishUrl.value,
     showcasePublishToken: showcasePublishToken.value,
   });
+
+  // Port and token are applied here, so the running server follows the field.
+  const newToken = webServerToken.value;
+  const webStatus = await window.api.setWebServer({
+    enabled: webServerToggle.getAttribute('aria-checked') === 'true',
+    port: webPort,
+    ...(newToken ? { token: newToken } : {}),
+  });
+  webServerToken.value = '';
+  webServerToken.placeholder = webStatus.tokenConfigured
+    ? 'Access token is configured — leave blank to keep it'
+    : 'No access token';
+  clearWebTokenButton.disabled = !webStatus.tokenConfigured;
+  renderWebServerStatus(webStatus);
+  applyWebModeLock();
+
+  if (webStatus.error) {
+    saveStatus.textContent = webStatus.error;
+    saveStatus.className = 'status error';
+    return;
+  }
+
   saveStatus.textContent = '✔ Settings saved.';
   saveStatus.className = 'status success';
   setTimeout(() => { saveStatus.className = 'status'; }, 2000);

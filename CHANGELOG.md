@@ -6,6 +6,25 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.1] — 2026-10-23
+
+### Added
+
+- **Web library view** — open your library in a browser on the same network. The page shows your assets, tags, thumbnails, and translated titles. Delete, import, and other file actions stay in the desktop app.
+- **Remote Access settings** — a new Settings > Integrations section turns the web server on or off. It has a configurable port (default 47823), an optional access token, the current addresses, and an Open in Browser button.
+
+### Changed
+
+- The web server is off by default and starts without a window. The desktop app starts it only when the setting is on.
+- The server reports a clear message when its port is already in use.
+- Save Settings applies a new port or token and restarts the server with the new values.
+
+### Security
+
+- API routes require the access token when you set one. The server is off until you turn it on.
+
+---
+
 ## [1.6.0] — 2026-09-11
 
 ### Added

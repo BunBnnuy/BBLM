@@ -80,6 +80,31 @@
         </div>
 
         <div class="settings-section">
+          <h3>Remote Access</h3>
+          <p>Turn on a small web server to open your library in a browser on this computer or on another device on the same network. It is off by default and starts silently — no window and no extra process. The server has no password unless you set an access token, so turn it off when you do not need it.</p>
+          <div class="settings-toggle-row">
+            <label for="web-server-toggle">Web library server</label>
+            <button id="web-server-toggle" class="btn-ghost" role="switch" aria-checked="false">Off</button>
+          </div>
+          <div class="field">
+            <label for="web-server-port">Port (default 47823)</label>
+            <input type="number" id="web-server-port" min="1" max="65535" step="1" value="47823" />
+          </div>
+          <div class="field">
+            <label for="web-server-token">Access token (optional)</label>
+            <div class="field-row">
+              <input type="password" id="web-server-token" placeholder="No access token" autocomplete="new-password" />
+              <button class="btn-secondary" id="btn-clear-web-token">Remove</button>
+            </div>
+          </div>
+          <p>If you set a token, open the page as <code>http://address:port/?token=YOUR_TOKEN</code>. The token is stored in the local app settings. Save Settings applies a new port or token.</p>
+          <div class="settings-actions">
+            <button class="btn-ghost" id="btn-open-web-library">Open in Browser</button>
+          </div>
+          <div id="web-server-status" class="settings-help"></div>
+        </div>
+
+        <div class="settings-section">
           <h3>Unity Import</h3>
           <p>Import the companion package into any Unity project once, and it will show up here automatically whenever that project is open. Then right-click an archive asset and choose "Import to Unity" to select files and a target project.</p>
           <div class="settings-actions">
@@ -231,6 +256,7 @@
     </div>
   </div>
 
+  <script src="api-web.js"></script>
   <script src="releaseNotes.js"></script>
   <script src="settings.js"></script>
 </body>

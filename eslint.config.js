@@ -3,7 +3,7 @@
 const globals = require('globals');
 
 module.exports = [
-  { ignores: ['node_modules/**', 'dist/**', 'release/**'] },
+  { ignores: ['node_modules/**', 'dist/**', 'release/**', '.claude/**', 'booth-forum-link-extension/**'] },
   {
     files: ['**/*.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { ...globals.node, ...globals.browser } },

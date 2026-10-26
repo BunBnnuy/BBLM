@@ -97,6 +97,27 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 }
 .lib-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 
+/* ── Web mode: send a Booth link to the desktop app ── */
+.web-send-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.web-send-title { font-size: 12px; font-weight: 600; color: var(--text-dim); white-space: nowrap; }
+.web-send-bar input {
+  flex: 1;
+  max-width: 520px;
+  min-width: 180px;
+}
+.web-send-status { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.web-send-status.busy { color: var(--warn); }
+.web-send-status.done { color: #3ddc84; }
+.web-send-status.error { color: var(--accent); }
+
 /* ── Search + filter wrapper ── */
 .search-wrap {
   display: flex;

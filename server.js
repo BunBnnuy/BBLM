@@ -8,6 +8,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { parseBoothItemUrl, parseBoothDownloadUrl } = require('./src/boothItemLink');
+const { writeJsonAtomic } = require('./src/atomicFs');
 
 const ROOT_DIR = __dirname;
 const RENDERER_DIR = path.join(ROOT_DIR, 'renderer');
@@ -103,13 +105,6 @@ function isValidAssetId(id) {
   return typeof id === 'string' && /^[A-Za-z0-9._-]{1,120}$/.test(id);
 }
 
-function isBoothUrl(value) {
-  try {
-    const u = new URL(String(value));
-    return u.protocol === 'https:' && (u.hostname === 'booth.pm' || u.hostname.endsWith('.booth.pm'));
-  } catch { return false; }
-}
-
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let raw = '';
@@ -143,6 +138,9 @@ function createWebServer(options = {}) {
   const desktopFound = options.desktopFound !== false;
   const fixedRoot = typeof options.rootFolder === 'string' ? options.rootFolder : '';
   const fixedRootSource = options.rootSource || 'option';
+  // Set by the desktop app. Without it, Booth link downloads report that the
+  // desktop app is needed.
+  const onDownloadRequest = typeof options.onDownloadRequest === 'function' ? options.onDownloadRequest : null;
 
   // ── Booth Free Items scan state ───────────────────────────────────────────
   // Same scrapeFreeItems engine as the desktop app. Browsers poll
@@ -190,6 +188,38 @@ function createWebServer(options = {}) {
   const { getAssets } = require('./src/assetManager');
   const { displayTitle } = require('./src/titleTranslations');
 
+  // ── Malware acknowledgement (web) ─────────────────────────────────────────
+  // The scan popup asks the user to mark an asset safe or unsafe. The desktop
+  // app writes the answer to meta.json over IPC; web mode must do the same or
+  // the popup returns on every page load.
+  function applyMalwareAcknowledgement(assetId, markedSafe) {
+    if (!isValidAssetId(assetId)) return { ok: false, error: 'Bad asset id', status: 400 };
+    const { resolveExistingAssetDir } = require('./src/security/pathPolicy');
+    let assetDir;
+    try { assetDir = resolveExistingAssetDir(store.get('rootFolder', ''), assetId); }
+    catch (err) { return { ok: false, error: err.message || 'Asset not found', status: 404 }; }
+
+    const metaPath = path.join(assetDir, 'meta.json');
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); }
+    catch { return { ok: false, error: 'Asset metadata not found', status: 404 }; }
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+      return { ok: false, error: 'Asset metadata is invalid', status: 500 };
+    }
+
+    // Same rule as the desktop app: Critical findings must be marked unsafe.
+    if (markedSafe && meta.scanStatus === 'critical') {
+      return { ok: false, error: 'Critical findings must be marked unsafe', status: 409 };
+    }
+
+    meta.scanMarkedSafe = markedSafe === true;
+    meta.scanAcknowledged = true;
+    writeJsonAtomic(metaPath, meta);
+    const { touchIndexEntry } = require('./src/assetManager');
+    touchIndexEntry(store, assetId, meta);
+    return { ok: true, scanAcknowledged: true, scanMarkedSafe: meta.scanMarkedSafe };
+  }
+
   async function runFreeItemsScanWeb() {
     if (freeScan.running) return;
     freeScan.running = true;
@@ -215,6 +245,107 @@ function createWebServer(options = {}) {
       pushFreeEvent('progress', { phase: 'error', message: err.message });
     } finally {
       freeScan.running = false;
+    }
+  }
+
+  // ── Booth download requests ───────────────────────────────────────────────
+  // A browser has no Booth session and no file access, so it cannot download by
+  // itself. The page sends a Booth item link or a Booth download deeplink here
+  // and the desktop app resolves it and queues the file. The page polls the
+  // state of its request. Without a desktop hook (plain `node server.js`) the
+  // routes report that the desktop app is needed.
+  const DOWNLOAD_REQUEST_LIMIT = 20;
+  const DOWNLOAD_STATES = new Set(['resolving', 'queued', 'downloading', 'done', 'error']);
+  const ACTIVE_DOWNLOAD_LIMIT = 5;
+  const STALE_DOWNLOAD_MS = 15 * 60 * 1000;
+  const downloadRequests = new Map();
+  let downloadRequestSeq = 0;
+
+  function publicDownloadRequest(request) {
+    return {
+      id: request.id,
+      kind: request.kind,
+      itemId: request.itemId,
+      itemUrl: request.itemUrl,
+      state: request.state,
+      percent: request.percent,
+      parts: request.parts,
+      error: request.error,
+      createdAt: request.createdAt,
+      updatedAt: request.updatedAt,
+    };
+  }
+
+  // Only the known fields are applied, so a desktop update cannot inject data.
+  function applyDownloadUpdate(request, patch) {
+    if (!patch || typeof patch !== 'object') return;
+    if (DOWNLOAD_STATES.has(patch.state)) request.state = patch.state;
+    if (Number.isFinite(Number(patch.percent))) {
+      request.percent = Math.max(0, Math.min(100, Math.round(Number(patch.percent))));
+    }
+    if (Number.isFinite(Number(patch.parts))) {
+      request.parts = Math.max(1, Math.min(50, Math.round(Number(patch.parts))));
+    }
+    if (typeof patch.error === 'string') request.error = patch.error.slice(0, 300);
+    request.updatedAt = Date.now();
+  }
+
+  // kind is 'item' (a Booth item page link) or 'deeplink' (a Booth download
+  // link). The desktop app answers after the Booth page is read, which can take
+  // a while, so the HTTP reply does not wait for it.
+  function beginDownloadRequest({ kind, itemId = '', itemUrl = '', url = '' }) {
+    downloadRequestSeq += 1;
+    const now = Date.now();
+    const request = {
+      id: `d${downloadRequestSeq}`,
+      kind,
+      itemId,
+      itemUrl,
+      state: 'resolving',
+      percent: 0,
+      parts: 1,
+      error: '',
+      createdAt: now,
+      updatedAt: now,
+    };
+    downloadRequests.set(request.id, request);
+    trimDownloadRequests();
+
+    Promise.resolve()
+      .then(() => onDownloadRequest({
+        kind,
+        itemId,
+        itemUrl,
+        url,
+        update: (patch) => applyDownloadUpdate(request, patch),
+      }))
+      .catch((err) => applyDownloadUpdate(request, { state: 'error', error: err.message }));
+
+    return request;
+  }
+
+  function downloadBusyResponse(res) {
+    return sendJson(res, { ok: false, error: 'Too many downloads are waiting. Try again in a moment.' }, 429);
+  }
+
+  function activeDownloadCount() {
+    const now = Date.now();
+    let count = 0;
+    for (const request of downloadRequests.values()) {
+      if (request.state === 'done' || request.state === 'error') continue;
+      // A request the desktop never finished must not block new ones.
+      if (now - request.updatedAt > STALE_DOWNLOAD_MS) continue;
+      count += 1;
+    }
+    return count;
+  }
+
+  function trimDownloadRequests() {
+    // Keep the request list bounded. The oldest finished entries go first.
+    while (downloadRequests.size > DOWNLOAD_REQUEST_LIMIT) {
+      const oldest = downloadRequests.keys().next();
+      if (oldest.done) return;
+      downloadRequests.delete(oldest.value);
     }
   }
 
@@ -299,10 +430,80 @@ function createWebServer(options = {}) {
     if (req.method === 'POST' && url.pathname === '/api/free-items/download') {
       try {
         const body = await readJsonBody(req);
-        if (!isBoothUrl(body.url)) return sendJson(res, { ok: false, error: 'Invalid Booth URL' }, 400);
-        // One-click download needs the desktop app's Booth login window.
-        return sendJson(res, { ok: false, error: 'One-click download needs the desktop app. Click the row to open the Booth page.' });
+        let link;
+        try { link = parseBoothDownloadUrl(body && body.url); } catch (err) { return sendJson(res, { ok: false, error: err.message }, 400); }
+        if (typeof onDownloadRequest !== 'function') {
+          return sendJson(res, {
+            ok: false,
+            error: "Downloads need the desktop app. Open BB's LibMan and turn on Remote Access.",
+          }, 501);
+        }
+        if (activeDownloadCount() >= ACTIVE_DOWNLOAD_LIMIT) return downloadBusyResponse(res);
+        // Same deeplink the desktop app opens: the desktop app catches the
+        // booth-library-manager:// redirect and queues the file.
+        const request = beginDownloadRequest({ kind: 'deeplink', url: link.url });
+        return sendJson(res, { ok: true, request: publicDownloadRequest(request) }, 202);
       } catch (err) { return sendJson(res, { ok: false, error: err.message }, 400); }
+    }
+
+    // ── Booth link downloads (web → desktop) ──────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/api/download') {
+      let body;
+      try { body = await readJsonBody(req); } catch (err) { return sendJson(res, { ok: false, error: err.message }, 400); }
+
+      // A Booth item page link, or a Booth download deeplink.
+      let link;
+      try {
+        const item = parseBoothItemUrl(body && body.url);
+        link = { kind: 'item', itemId: item.itemId, itemUrl: item.itemUrl };
+      } catch (itemError) {
+        try {
+          const deeplink = parseBoothDownloadUrl(body && body.url);
+          link = { kind: 'deeplink', url: deeplink.url };
+        } catch {
+          return sendJson(res, { ok: false, error: itemError.message }, 400);
+        }
+      }
+
+      if (typeof onDownloadRequest !== 'function') {
+        return sendJson(res, {
+          ok: false,
+          error: "Downloads need the desktop app. Open BB's LibMan and turn on Remote Access.",
+        }, 501);
+      }
+      if (activeDownloadCount() >= ACTIVE_DOWNLOAD_LIMIT) return downloadBusyResponse(res);
+
+      const request = beginDownloadRequest({
+        kind: link.kind,
+        itemId: link.itemId || '',
+        itemUrl: link.itemUrl || '',
+        url: link.url || '',
+      });
+      return sendJson(res, { ok: true, request: publicDownloadRequest(request) }, 202);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/download/status') {
+      const id = url.searchParams.get('id') || '';
+      if (id) {
+        const request = downloadRequests.get(id);
+        if (!request) return sendJson(res, { ok: false, error: 'Unknown download request' }, 404);
+        return sendJson(res, { ok: true, request: publicDownloadRequest(request) });
+      }
+      const requests = [...downloadRequests.values()].map(publicDownloadRequest).reverse();
+      return sendJson(res, { ok: true, requests });
+    }
+
+    // ── Malware acknowledgement (web page → asset meta.json) ──────────────
+    const ackMatch = url.pathname.match(/^\/api\/assets\/([^/]+)\/malware-acknowledge$/);
+    if (req.method === 'POST' && ackMatch) {
+      let assetId = '';
+      try { assetId = decodeURIComponent(ackMatch[1]); }
+      catch { return sendJson(res, { ok: false, error: 'Bad asset id' }, 400); }
+      let body;
+      try { body = await readJsonBody(req); }
+      catch (err) { return sendJson(res, { ok: false, error: err.message }, 400); }
+      const result = applyMalwareAcknowledgement(assetId, body && body.markedSafe === true);
+      return sendJson(res, result, result.ok ? 200 : (result.status || 400));
     }
 
     if (req.method === 'GET' && url.pathname === '/api/config') {

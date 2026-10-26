@@ -33,9 +33,10 @@ function listUrls(port) {
 }
 
 class LibraryWebServer {
-  constructor({ store, configPath }) {
+  constructor({ store, configPath, onDownloadRequest }) {
     this.store = store;
     this.configPath = configPath;
+    this.onDownloadRequest = typeof onDownloadRequest === 'function' ? onDownloadRequest : null;
     this.instance = null;
     this.instanceToken = '';
     this.starting = null;
@@ -85,6 +86,7 @@ class LibraryWebServer {
           // Reads the live Electron store so library changes apply at once.
           desktopStore: { get: (key, def) => this.store.get(key, def) },
           desktopFound: true,
+          onDownloadRequest: this.onDownloadRequest || undefined,
           log: (level, message) => logger[level === 'warn' ? 'warn' : 'info']('web-server', { message }),
         });
         this.instanceToken = token;

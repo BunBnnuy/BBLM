@@ -127,6 +127,16 @@ Multiple links triggered in quick succession are handled by a **download queue**
 - **Hide** — remove an asset from the library view without deleting it; restore it from Settings → Hidden Assets
 - **Delete** — permanently delete an asset and all its files
 
+### 🌐 Web Library (Remote Access)
+Open your library in a browser on the same network, or on the same computer, without opening the desktop window:
+
+- Turn it on in **Settings → Integrations → Remote Access**; it is off by default and runs silently inside the app
+- Shows assets, thumbnails, tags, and translated titles, with search, filters, and pagination
+- **Download a Booth item from the browser** — paste a Booth item link (for example `https://booth.pm/en/items/1234567`) in the page and press Download. The desktop app reads the item page with your saved Booth session, queues the file, and the page shows the queue state and download progress
+- **Download from Booth Free Items in the browser** — the Download buttons in the Free Items tab also work in the web page; each row shows the queue state and the download percent
+- **Malware scan answers are saved** — the scan popup works in the browser too. **Mark as Safe** and **Mark as Unsafe** are written to the item, so the popup does not ask again on the next visit
+- An optional access token protects the API routes; open the page as `http://address:port/?token=YOUR_TOKEN`
+
 ### 🔄 Automatic Updates
 - On launch, BB's LibMan checks GitHub Releases for a newer version, downloads it silently in the background, and installs it the next time the app quits — no manual download needed
 
@@ -254,6 +264,7 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 │   ├── archiveScanner.js    # Library Scanner policy (limits, preflight)
 │   ├── scannerWorker.js     # Sandboxed archive-listing child process
 │   ├── boothFreeScraper.js  # Booth free-item scanner (listing + per-page variation check)
+│   ├── boothItemLink.js     # Booth item link parser for web-mode downloads
 │   ├── downloadsMonitor.js  # fs.watch + file stability poller
 │   ├── fileWatcher.js       # One-shot file wait (manual import)
 │   ├── httpClient.js        # Shared HTTPS client (DNS-pinned, redirect/size/time limits)
@@ -273,7 +284,8 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 │   ├── modal.html / modal.js        # Import / edit dialog with tag editor
 │   ├── releaseNotes.js              # Release notes popup rendering
 │   ├── settings.html / settings.js  # Settings page
-│   └── styles.css
+│   ├── styles.css
+│   └── webSend.js                   # Web mode: send a Booth link to the desktop app
 ├── assets/
 │   ├── icon.png
 │   └── booth.png

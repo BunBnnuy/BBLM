@@ -44,6 +44,13 @@
     </div>
   </div>
 
+  <div id="web-send-bar" class="web-send-bar" style="display:none;">
+    <span class="web-send-title">Download from Booth</span>
+    <input type="url" id="web-send-input" placeholder="Paste a Booth item link — https://booth.pm/en/items/1234567" autocomplete="off" spellcheck="false" />
+    <button class="btn-primary" id="web-send-btn">⬇ Download</button>
+    <span id="web-send-status" class="web-send-status" role="status"></span>
+  </div>
+
   <div id="release-notes-overlay" class="release-notes-overlay" style="display:none;">
     <div class="release-notes-modal" role="dialog" aria-modal="true" aria-labelledby="release-notes-title">
       <div class="release-notes-header">
@@ -255,5 +262,6 @@
   <script src="app.js"></script>
   <script src="freeItems.js"></script>
   <script src="scanner.js"></script>
+  <script src="webSend.js"></script>
 </body>
 </html>

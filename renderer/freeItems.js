@@ -170,6 +170,42 @@ document.getElementById('fi-btn-last').addEventListener('click',  () => {
   renderFiPage();
 });
 
+// Web mode: the browser asks the desktop app to download the item. Follow the
+// request so the row shows the real state instead of only "Queued".
+function followWebDownload(dlBtn, item, requestId) {
+  let ticks = 0;
+  let failures = 0;
+  const timer = setInterval(async () => {
+    ticks += 1;
+    if (ticks > 150) { clearInterval(timer); dlBtn.textContent = '✔ Queued'; return; }
+    let request;
+    try {
+      const data = await window.api.webDownloadStatus(requestId);
+      request = data && data.request;
+    } catch {
+      failures += 1;
+      if (failures > 3) { clearInterval(timer); dlBtn.textContent = '✔ Queued'; }
+      return;
+    }
+    if (!request) return;
+    if (request.state === 'resolving' || request.state === 'queued') {
+      dlBtn.textContent = '✔ Queued';
+    } else if (request.state === 'downloading') {
+      dlBtn.textContent = `⬇ ${request.percent || 0}%`;
+    } else if (request.state === 'done') {
+      clearInterval(timer);
+      dlBtn.textContent = '✔ Downloaded';
+      libraryItemIds.add(item.itemId);
+    } else if (request.state === 'error') {
+      clearInterval(timer);
+      dlBtn.disabled = false;
+      dlBtn.textContent = '⬇ Download';
+      setStatus(`Error: ${request.error || 'Download failed'}`, 'error');
+      setTimeout(() => setStatus('Ready'), 6000);
+    }
+  }, 2000);
+}
+
 // ── Build a list row ──
 function buildRow(item) {
   const boothUrl  = item.boothUrl || `https://booth.pm/en/items/${item.itemId}`;
@@ -209,12 +245,20 @@ function buildRow(item) {
       dlBtn.disabled = true;
       dlBtn.textContent = '…';
       console.log('[free-items] downloading', { itemId: item.itemId, name: item.name, deeplinkUrl: dlBtn.dataset.url });
-      const result = await window.api.downloadFreeItem(dlBtn.dataset.url);
+      let result;
+      try {
+        result = await window.api.downloadFreeItem(dlBtn.dataset.url);
+      } catch (err) {
+        result = { ok: false, error: err.message };
+      }
       console.log('[free-items] download result', result);
       if (result && result.ok) {
         dlBtn.textContent = '✔ Queued';
         // Mark as in library so re-render doesn't reset it
         libraryItemIds.add(item.itemId);
+        if (window.__BBLM_WEB__ && result.request && typeof window.api.webDownloadStatus === 'function') {
+          followWebDownload(dlBtn, item, result.request.id);
+        }
       } else {
         dlBtn.disabled = false;
         dlBtn.textContent = '⬇ Download';

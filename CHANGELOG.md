@@ -6,6 +6,26 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.7.0] — 2026-10-26
+
+### Added
+
+- **Booth link downloads from the web library** — the browser page now has a "Download from Booth" bar. Paste a Booth item link and press Download: the desktop app opens the item page with your saved Booth session, finds the Booth Library Manager download link, queues the file, and the page shows the queue state and download progress. Every variation of the item is queued. Booth download links are accepted too.
+- **Free Items download from the web** — the Download buttons in the Booth Free Items tab now work in the browser. They use the same path as the desktop: the link goes to the desktop app, which opens it with your saved Booth session and catches the Booth Library Manager redirect. The row shows "Queued", the download percent, and "Downloaded". The desktop app must be running.
+- **Download request state** — the web page follows the request from "Reading the Booth page" to "Queued", "Downloading …%", and "Done", and shows the reason when a download fails.
+
+### Changed
+
+- Downloads started from the browser queue in the desktop app. At most five can wait at once, and an unfinished request expires after 15 minutes.
+- The Remote Access settings explain the browser download bar.
+- Booth downloads are refused when the desktop app is not running and report that Remote Access must be on.
+
+### Fixed
+
+- **"Mark as unsafe" is now saved in the web library** — answering the malware scan popup in a browser writes the answer to the item, the same way the desktop app does. The popup no longer comes back each time you open the web library, and Critical items still cannot be marked safe.
+
+---
+
 ## [1.6.1] — 2026-10-23
 
 ### Added

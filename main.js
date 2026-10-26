@@ -317,6 +317,36 @@ class DownloadQueue {
     this.active  = null; // currently processing item
     this.running = false;
     this._nextId = 1;
+    // Per-job callbacks stay out of the job objects: status() is sent over IPC
+    // and cannot carry functions. One job can serve more than one caller when
+    // the same link arrives twice.
+    this.hooks   = new Map();
+  }
+
+  _addHooks(id, hooks) {
+    if (!hooks) return;
+    if (typeof hooks.onProgress !== 'function' && typeof hooks.onDone !== 'function') return;
+    const list = this.hooks.get(id) || [];
+    list.push(hooks);
+    this.hooks.set(id, list);
+  }
+
+  // Reports progress and completion to optional callers (the web library uses
+  // this to show the state of a Booth link it sent).
+  _reportProgress(id, percent) {
+    for (const hooks of this.hooks.get(id) || []) {
+      if (typeof hooks.onProgress !== 'function') continue;
+      try { hooks.onProgress(percent); } catch (_) { /* a broken caller must not stop the download */ }
+    }
+  }
+
+  _finishHooks(id, result) {
+    const list = this.hooks.get(id) || [];
+    this.hooks.delete(id);
+    for (const hooks of list) {
+      if (typeof hooks.onDone !== 'function') continue;
+      try { hooks.onDone(result); } catch (_) { /* same */ }
+    }
   }
 
   _notify() {
@@ -332,12 +362,18 @@ class DownloadQueue {
     };
   }
 
-  add(job) {
+  add(job, hooks = {}) {
     const duplicate = [this.active, ...this.queue].find(item => item && item.dlUrl === job.dlUrl);
-    if (duplicate) return duplicate.id;
+    if (duplicate) {
+      // The same download is already running or waiting: follow it instead of
+      // adding it twice, so a second page request still gets its progress.
+      this._addHooks(duplicate.id, hooks);
+      return duplicate.id;
+    }
 
     const item = { ...job, id: this._nextId++, status: 'pending', percent: 0 };
     this.queue.push(item);
+    this._addHooks(item.id, hooks);
     this._notify();
     this._process();
     return item.id;
@@ -348,6 +384,7 @@ class DownloadQueue {
     const idx = this.queue.findIndex(i => i.id === id);
     if (idx !== -1) {
       this.queue.splice(idx, 1);
+      this._finishHooks(id, { ok: false, error: 'Cancelled' });
       this._notify();
       return true;
     }
@@ -366,8 +403,12 @@ class DownloadQueue {
     this.active.status = 'downloading';
     this._notify();
 
+    const jobId = this.active.id;
     try {
       await this._run(this.active);
+      this._finishHooks(jobId, this.active.cancelled
+        ? { ok: false, error: 'Cancelled' }
+        : { ok: true });
     } catch (err) {
       console.error('[queue] job failed:', err.message);
       if (this.active.assetId) {
@@ -379,6 +420,7 @@ class DownloadQueue {
       this.active.status = 'error';
       this.active.error  = err.message;
       this._notify();
+      this._finishHooks(jobId, { ok: false, error: err.message });
       if (mainWindow && store.get('notificationsEnabled', true)) {
         new Notification({
           title: "BB's LibMan — Download Failed",
@@ -457,6 +499,7 @@ class DownloadQueue {
     await downloadWithProgress(dlUrl, destPath, itemId, 0, (percent) => {
       item.percent = percent;
       this._notify();
+      this._reportProgress(item.id, percent);
       if (mainWindow) mainWindow.webContents.send('asset-download-progress', { assetId: shell.assetId, percent });
     });
 
@@ -526,7 +569,7 @@ function handleUrl(url) {
   }
 }
 
-function handleBoothDownloadUrl(url, freeItemPending = false) {
+function handleBoothDownloadUrl(url, freeItemPending = false, hooks = {}) {
   console.log('[booth-download] raw url:', url);
   try {
     const parsed = parseDownloadProtocol(url);
@@ -539,10 +582,12 @@ function handleBoothDownloadUrl(url, freeItemPending = false) {
       originUrl,
       freeItemPending,
     };
-    const queueId = downloadQueue.add(job);
+    const queueId = downloadQueue.add(job, hooks);
     console.log(`[booth-download] queued #${queueId}`);
+    return queueId;
   } catch (err) {
     console.warn('[booth-download] rejected:', err.message);
+    return null;
   }
 }
 
@@ -900,6 +945,9 @@ function ensureWebServer() {
     webServer = new LibraryWebServer({
       store,
       configPath: path.join(app.getPath('userData'), 'bblm-web-config.json'),
+      // Booth links and download deeplinks sent from the web library are
+      // downloaded here, with the desktop download flow.
+      onDownloadRequest: handleWebDownloadRequest,
     });
   }
   return webServer;
@@ -1498,7 +1546,7 @@ ipcMain.on('refresh-library', (event, data) => {
  * If the session isn't authenticated, the window becomes visible so the user
  * can log in; after sign-in we automatically retry the deeplink.
  */
-function downloadFreeItemInternal(deeplinkUrl) {
+function downloadFreeItemInternal(deeplinkUrl, hooks = {}) {
   console.log('[free-item-download] deeplink:', deeplinkUrl);
   return new Promise((resolve, reject) => {
     if (!allowBoothUrl(deeplinkUrl)) return reject(new Error('Invalid Booth URL'));
@@ -1520,12 +1568,13 @@ function downloadFreeItemInternal(deeplinkUrl) {
     });
 
     let done = false;
+    let queueId = null;
 
     const finish = (err) => {
       if (done) return;
       done = true;
       if (!win.isDestroyed()) win.destroy();
-      err ? reject(err) : resolve();
+      err ? reject(err) : resolve(queueId);
     };
 
     const loadDeeplink = () => {
@@ -1535,7 +1584,7 @@ function downloadFreeItemInternal(deeplinkUrl) {
     win.webContents.setWindowOpenHandler(({ url }) => {
       console.log('[free-item-download] window-open:', url);
       if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
-        handleBoothDownloadUrl(url, false);
+        queueId = handleBoothDownloadUrl(url, false, hooks);
         finish(null);
       }
       return { action: 'deny' };
@@ -1544,7 +1593,7 @@ function downloadFreeItemInternal(deeplinkUrl) {
       console.log('[free-item-download] will-navigate:', url);
       if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
         event.preventDefault();
-        handleBoothDownloadUrl(url, false);
+        queueId = handleBoothDownloadUrl(url, false, hooks);
         finish(null);
         return;
       }
@@ -1556,7 +1605,7 @@ function downloadFreeItemInternal(deeplinkUrl) {
       console.log('[free-item-download] will-redirect:', url);
       if (url.startsWith('booth-library-manager://') || url.startsWith('vroid.closet://')) {
         event.preventDefault();
-        handleBoothDownloadUrl(url, false);
+        queueId = handleBoothDownloadUrl(url, false, hooks);
         finish(null);
       }
     });
@@ -1587,6 +1636,232 @@ function downloadFreeItemInternal(deeplinkUrl) {
 
     loadDeeplink();
   });
+}
+
+// ── Web library: Booth item link → download ──────────────────────────────────
+// The web library cannot download by itself, so a Booth item link is resolved
+// here, in the desktop app, with the saved Booth session. The item page holds
+// the "Booth Library Manager" deeplink in its download menu data. Each deeplink
+// then runs through downloadFreeItemInternal, which queues the file.
+function extractBlmDeeplinksFromPage(win) {
+  return win.webContents.executeJavaScript(`(() => {
+    const urls = [];
+    const add = (value) => {
+      if (typeof value !== 'string') return;
+      if (!value.includes('/deeplink') || !value.includes('client=booth-library-manager')) return;
+      if (!urls.includes(value)) urls.push(value);
+    };
+    for (const el of document.querySelectorAll('[data-dropdown-items]')) {
+      let entries;
+      try { entries = JSON.parse(el.getAttribute('data-dropdown-items') || '[]'); } catch { continue; }
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (!entry) continue;
+        add(entry.deeplinkDownloadableUrl);
+        add(entry.deeplinkUrl);
+      }
+    }
+    // Fallback: a plain link when the menu is already expanded.
+    for (const anchor of document.querySelectorAll('a[href*="/deeplink"]')) add(anchor.href);
+    return urls;
+  })()`, false);
+}
+
+const BOOTH_SIGN_IN_PAGE = /\/users\/sign_in|\/login/i;
+
+// True when the page shows Booth's sign-in link, so the visit is anonymous.
+function pageNeedsSignIn(win) {
+  return win.webContents.executeJavaScript(
+    `Boolean(document.querySelector('a[href*="/users/sign_in"]'))`, false);
+}
+
+function findBoothItemDeeplinks(itemId) {
+  return new Promise((resolve, reject) => {
+    if (!/^\d{1,20}$/.test(String(itemId))) return reject(new Error('Invalid Booth item id'));
+    const itemUrl = `https://booth.pm/en/items/${itemId}`;
+
+    const win = new BrowserWindow({
+      width: 520,
+      height: 660,
+      show: false,
+      parent: mainWindow || undefined,
+      icon: ICON,
+      webPreferences: {
+        partition: 'persist:booth-auth',
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+      },
+      title: 'Booth — Sign In',
+      autoHideMenuBar: true,
+    });
+
+    let settled = false;
+    let timer = null;
+    let awaitingSignIn = false;
+    let signInAttempted = false;
+
+    const finish = (err, urls) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!win.isDestroyed()) win.destroy();
+      err ? reject(err) : resolve(urls || []);
+    };
+
+    const armTimeout = (ms) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(new Error('Booth did not answer in time. Try again.')), ms);
+    };
+
+    armTimeout(45000);
+
+    const showForSignIn = () => {
+      if (!win.isVisible()) win.show();
+      armTimeout(5 * 60 * 1000);
+    };
+
+    win.webContents.on('did-finish-load', async () => {
+      if (settled) return;
+      let current = '';
+      try { current = win.webContents.getURL(); } catch (_) { return; }
+
+      if (BOOTH_SIGN_IN_PAGE.test(current)) {
+        // The saved session expired: let the user sign in on the desktop.
+        awaitingSignIn = true;
+        showForSignIn();
+        return;
+      }
+      if (!allowBoothUrl(current)) return;
+      if (awaitingSignIn) {
+        // Signed in. Read the item page again.
+        awaitingSignIn = false;
+        armTimeout(45000);
+        win.loadURL(itemUrl).catch(err => finish(err));
+        return;
+      }
+
+      try {
+        let urls = await extractBlmDeeplinksFromPage(win);
+        if (urls.length === 0) {
+          // The download menu can render after the page load event.
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          if (settled) return;
+          urls = await extractBlmDeeplinksFromPage(win);
+        }
+        if (urls.length === 0 && !signInAttempted) {
+          // An anonymous visit has no download menu. Offer a sign-in once.
+          const anonymous = await pageNeedsSignIn(win).catch(() => false);
+          if (!settled && anonymous) {
+            signInAttempted = true;
+            awaitingSignIn = true;
+            showForSignIn();
+            win.loadURL('https://booth.pm/users/sign_in').catch(err => finish(err));
+            return;
+          }
+        }
+        finish(null, urls);
+      } catch (err) {
+        finish(err);
+      }
+    });
+
+    win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      if (errorCode === -3) return; // ABORTED during a redirect
+      finish(new Error(`Booth page failed to load: ${errorDescription || errorCode}`));
+    });
+
+    win.on('closed', () => {
+      if (!settled) finish(new Error('The Booth window closed before the link was found.'));
+    });
+
+    win.loadURL(itemUrl).catch(err => finish(err));
+  });
+}
+
+async function queueWebBoothItem({ itemId, update }) {
+  const report = typeof update === 'function' ? update : () => {};
+  try {
+    report({ state: 'resolving' });
+    const deeplinks = await findBoothItemDeeplinks(itemId);
+    if (deeplinks.length === 0) {
+      report({
+        state: 'error',
+        error: 'No Booth download link was found. Check that you own the item and that you are signed in to Booth in the desktop app.',
+      });
+      return;
+    }
+
+    let remaining = deeplinks.length;
+    let failed = false;
+    const hooks = {
+      onProgress: (percent) => report({ state: 'downloading', percent }),
+      onDone: ({ ok, error } = {}) => {
+        if (failed) return;
+        if (!ok) {
+          failed = true;
+          report({ state: 'error', error: error || 'The download failed.' });
+          return;
+        }
+        remaining -= 1;
+        if (remaining <= 0) report({ state: 'done', percent: 100 });
+      },
+    };
+
+    report({ state: 'queued', parts: deeplinks.length });
+    let queuedCount = 0;
+    for (const deeplink of deeplinks) {
+      try {
+        if (await downloadFreeItemInternal(deeplink, hooks)) queuedCount += 1;
+      } catch (err) {
+        logger.warn('web-download-queue-failed', { message: err.message });
+      }
+    }
+
+    if (queuedCount === 0) {
+      report({ state: 'error', error: 'Booth did not start the download. Open the item on Booth and check it again.' });
+      return;
+    }
+    // Count deeplinks that could not be queued so the state can still finish.
+    remaining -= (deeplinks.length - queuedCount);
+    if (remaining <= 0 && !failed) report({ state: 'done', percent: 100 });
+  } catch (err) {
+    logger.warn('web-download-failed', { message: err.message });
+    report({ state: 'error', error: err.message });
+  }
+}
+
+// The web library sends two kinds of request: an item page link, which must be
+// read first, and a Booth download deeplink, which runs the same flow as the
+// desktop Free Items tab.
+function handleWebDownloadRequest(request) {
+  if (request.kind === 'deeplink') return queueWebBoothDeeplink(request);
+  return queueWebBoothItem(request);
+}
+
+async function queueWebBoothDeeplink({ url, update }) {
+  const report = typeof update === 'function' ? update : () => {};
+  if (!allowBoothUrl(url)) {
+    report({ state: 'error', error: 'Invalid Booth download link.' });
+    return;
+  }
+  try {
+    const hooks = {
+      onProgress: (percent) => report({ state: 'downloading', percent }),
+      onDone: ({ ok, error } = {}) => report(ok
+        ? { state: 'done', percent: 100 }
+        : { state: 'error', error: error || 'The download failed.' }),
+    };
+    report({ state: 'queued', parts: 1 });
+    const queueId = await downloadFreeItemInternal(url, hooks);
+    if (!queueId) {
+      report({ state: 'error', error: 'Booth did not start the download. Open the item on Booth and check it again.' });
+    }
+  } catch (err) {
+    logger.warn('web-download-failed', { message: err.message });
+    report({ state: 'error', error: err.message });
+  }
 }
 
 ipcMain.handle('download-free-item', async (event, deeplinkUrl) => {

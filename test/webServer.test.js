@@ -20,6 +20,26 @@ function request(port, urlPath, headers = {}) {
   });
 }
 
+function postJson(port, urlPath, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload || {});
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path: urlPath,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body: text }));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 function temporaryConfig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bblm-web-'));
   return { dir, configPath: path.join(dir, 'web-config.json') };
@@ -75,6 +95,65 @@ test('an access token protects API routes but not the page shell', async () => {
 
   const page = await request(port, '/');
   assert.equal(page.status, 200);
+
+  await instance.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('marking an item safe or unsafe in web mode is saved', async () => {
+  const { dir, configPath } = temporaryConfig();
+  const root = path.join(dir, 'library');
+  const writeAsset = (id, meta) => {
+    const assetDir = path.join(root, id);
+    fs.mkdirSync(assetDir, { recursive: true });
+    fs.writeFileSync(path.join(assetDir, 'meta.json'), JSON.stringify({
+      id,
+      name: `Asset ${id}`,
+      importedAt: new Date().toISOString(),
+      files: [],
+      scanAcknowledged: false,
+      scanMarkedSafe: false,
+      ...meta,
+    }));
+  };
+  writeAsset('asset-high', { scanStatus: 'high' });
+  writeAsset('asset-critical', { scanStatus: 'critical' });
+
+  const desktopStore = { data: { rootFolder: root }, get(key, def) { return this.data[key] === undefined ? def : this.data[key]; } };
+  const instance = await startWebServer({
+    port: 0,
+    host: '127.0.0.1',
+    configPath,
+    desktopStore,
+    log: () => {},
+  });
+  const { port } = instance.getInfo();
+
+  const before = JSON.parse((await request(port, '/api/assets')).body);
+  assert.equal(before.find((a) => a.id === 'asset-high').scanAcknowledged, false);
+
+  // "Mark as unsafe" must survive a reload, so it is written to meta.json.
+  const marked = await postJson(port, '/api/assets/asset-high/malware-acknowledge', { markedSafe: false });
+  assert.equal(marked.status, 200);
+  assert.equal(JSON.parse(marked.body).scanAcknowledged, true);
+
+  const after = JSON.parse((await request(port, '/api/assets')).body);
+  assert.equal(after.find((a) => a.id === 'asset-high').scanAcknowledged, true);
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'asset-high', 'meta.json'), 'utf8'));
+  assert.equal(onDisk.scanAcknowledged, true);
+  assert.equal(onDisk.scanMarkedSafe, false);
+
+  // Critical findings can never be waved off as safe, but "unsafe" works.
+  const tooSafe = await postJson(port, '/api/assets/asset-critical/malware-acknowledge', { markedSafe: true });
+  assert.equal(tooSafe.status, 409);
+  const critical = JSON.parse((await request(port, '/api/assets')).body).find((a) => a.id === 'asset-critical');
+  assert.equal(critical.scanAcknowledged, false);
+  const criticalUnsafe = await postJson(port, '/api/assets/asset-critical/malware-acknowledge', { markedSafe: false });
+  assert.equal(criticalUnsafe.status, 200);
+
+  const missing = await postJson(port, '/api/assets/does-not-exist/malware-acknowledge', { markedSafe: false });
+  assert.equal(missing.status, 404);
 
   await instance.close();
   fs.rmSync(dir, { recursive: true, force: true });

@@ -18,8 +18,10 @@
     if (WEB_TOKEN) headers['x-bblm-token'] = WEB_TOKEN;
     const res = await fetch(url, { headers });
     if (res.status === 401) throw new Error('Unauthorized: check the ?token= value.');
-    if (!res.ok) throw new Error('Request failed: ' + url);
-    return res.json();
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) throw new Error((data && data.error) || ('Request failed: ' + url));
+    return data;
   }
 
   async function sendJson(method, url, body) {
@@ -27,8 +29,10 @@
     if (WEB_TOKEN) headers['x-bblm-token'] = WEB_TOKEN;
     const res = await fetch(url, { method, headers, body: JSON.stringify(body || {}) });
     if (res.status === 401) throw new Error('Unauthorized: check the ?token= value.');
-    if (!res.ok) throw new Error('Request failed: ' + url);
-    return res.json();
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) throw new Error((data && data.error) || ('Request failed: ' + url));
+    return data;
   }
 
   // Free Items live updates: the server keeps an event queue per scan.
@@ -80,6 +84,23 @@
   function withToken(url) {
     if (!WEB_TOKEN || !url || !url.startsWith('/api/')) return url;
     return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(WEB_TOKEN);
+  }
+
+  // Saves "marked safe" / "marked unsafe" for a scan alert. Returns false when
+  // the server rejects the change so the caller can keep the alert open.
+  async function markMalwareAck(assetId, markedSafe) {
+    if (!assetId) return false;
+    try {
+      const data = await sendJson(
+        'POST',
+        '/api/assets/' + encodeURIComponent(assetId) + '/malware-acknowledge',
+        { markedSafe: Boolean(markedSafe) }
+      );
+      return Boolean(data && data.ok);
+    } catch (err) {
+      console.warn('[web] malware acknowledgement failed:', err.message);
+      return false;
+    }
   }
 
   window.api = {
@@ -149,8 +170,10 @@
     publishShowcase: okFalse,
     malwareScanNow: okFalse,
     malwareScanAll: okFalse,
-    malwareMarkSafe: async () => false,
-    malwareMarkUnsafe: async () => false,
+    // Scan popup answers persist to the asset's meta.json like the desktop app
+    // does, so a marked item does not ask again on the next page load.
+    malwareMarkSafe: (assetId) => markMalwareAck(assetId, true),
+    malwareMarkUnsafe: (assetId) => markMalwareAck(assetId, false),
     scannerScan: okFalse,
     scannerCancel: async () => false,
     scannerImportAsset: okFalse,
@@ -162,6 +185,9 @@
     startFreeScan: async () => { await sendJson('POST', '/api/free-items/scan', {}); startFreePoll(); return true; },
     stopFreeScan: async () => { try { await sendJson('POST', '/api/free-items/stop', {}); } catch {} stopFreePoll(); return true; },
     downloadFreeItem: (deeplinkUrl) => sendJson('POST', '/api/free-items/download', { url: deeplinkUrl }),
+    // Booth item link → the desktop app resolves and downloads it.
+    webDownload: (url) => sendJson('POST', '/api/download', { url }),
+    webDownloadStatus: (id) => getJson('/api/download/status' + (id ? '?id=' + encodeURIComponent(id) : '')),
     keepFreeItem: async () => false,
     deleteFreeItem: async () => false,
     getUnityProjects2: emptyList,

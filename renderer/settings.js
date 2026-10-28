@@ -117,8 +117,8 @@ function renderWebServerStatus(status) {
   if (status.running) {
     const urls = (status.urls || []).join('   •   ');
     webServerStatus.textContent = status.tokenConfigured
-      ? `Running: ${urls} — add ?token=… to the address.`
-      : `Running: ${urls}`;
+      ? `Running: ${urls} — the library is public; downloads and Settings need ?token=…`
+      : `Running: ${urls} — no token, so anyone with access can change the library.`;
     webServerStatus.style.color = '';
   } else if (status.error) {
     webServerStatus.textContent = status.error;

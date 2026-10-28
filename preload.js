@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('api', {
   setConfig: (config) => ipcRenderer.invoke('set-config', config),
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   getAssets: () => ipcRenderer.invoke('get-assets'),
+  getAssetScanOutput: (assetId) => ipcRenderer.invoke('get-asset-scan-output', assetId),
   scrapeImages: (url) => ipcRenderer.invoke('scrape-images', url),
   waitForFile: (opts) => ipcRenderer.invoke('wait-for-file', opts),
   importAsset: (opts) => ipcRenderer.invoke('import-asset', opts),

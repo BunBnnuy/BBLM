@@ -81,7 +81,7 @@
 
         <div class="settings-section">
           <h3>Remote Access</h3>
-          <p>Turn on a small web server to open your library in a browser on this computer or on another device on the same network. It is off by default and starts silently — no window and no extra process. The server has no password unless you set an access token, so turn it off when you do not need it.</p>
+          <p>Turn on a small web server to open your library in a browser on this computer or on another device on the same network. It is off by default and starts silently — no window and no extra process. Anyone who can reach the port can see the library, so turn it off when you do not need it.</p>
           <p>The browser page has a <strong>Download from Booth</strong> bar. Paste a Booth item link there to download it on this computer: the desktop app reads the item page with your saved Booth session and adds the download to its queue. The Download buttons in Booth Free Items also work from the browser. The desktop app must be running.</p>
           <div class="settings-toggle-row">
             <label for="web-server-toggle">Web library server</label>
@@ -98,7 +98,7 @@
               <button class="btn-secondary" id="btn-clear-web-token">Remove</button>
             </div>
           </div>
-          <p>If you set a token, open the page as <code>http://address:port/?token=YOUR_TOKEN</code>. The token is stored in the local app settings. Save Settings applies a new port or token.</p>
+          <p>If you set a token, the library view still opens without it. Downloads, Booth Free Items, the malware scan answers, and Settings need the token: open the page as <code>http://address:port/?token=YOUR_TOKEN</code>, or press <strong>🔒 Unlock</strong> in the page. Without a token, anyone who can reach the port can also change the library. The token is stored in the local app settings. Save Settings applies a new port or token.</p>
           <div class="settings-actions">
             <button class="btn-ghost" id="btn-open-web-library">Open in Browser</button>
           </div>

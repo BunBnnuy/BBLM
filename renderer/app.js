@@ -507,11 +507,19 @@ function glowCard(assetId) {
 }
 
 // ── Library ──────────────────────────────────────────────────────────────────
-async function loadLibrary(filter = '') {
+// Fetching the library is expensive (hundreds of assets plus the Booth
+// database), so keep the result and re-filter it locally while the user types.
+let libraryCache = null; // { assets, all }
+let libraryRequest = 0;
+
+async function fetchLibrary() {
+  const seq = ++libraryRequest;
   const [assets, boothResult] = await Promise.all([
     window.api.getAssets(),
     window.api.getBoothItems(),
   ]);
+  // A newer request started meanwhile — drop this answer.
+  if (seq !== libraryRequest) return null;
 
   const boothItems = Array.isArray(boothResult) ? boothResult : [];
 
@@ -528,7 +536,25 @@ async function loadLibrary(filter = '') {
     source: 'booth',
   }));
 
-  let all = [...assets, ...boothNormalised];
+  libraryCache = { assets, all: [...assets, ...boothNormalised] };
+  return libraryCache;
+}
+
+async function loadLibrary(filter = '') {
+  const data = await fetchLibrary();
+  if (!data) return;
+  renderLibrary(filter);
+}
+
+// Re-filter the library already in memory. Used for search keystrokes.
+function filterLibrary(filter = '') {
+  if (!libraryCache) { loadLibrary(filter); return; }
+  renderLibrary(filter);
+}
+
+function renderLibrary(filter = '') {
+  const { assets, all: source } = libraryCache || { assets: [], all: [] };
+  let all = source;
 
   // Build tag counts from full unfiltered list
   allTagCounts = {};
@@ -1007,7 +1033,19 @@ function showMalwareAlert(info) {
   if (!currentScanAlert) advanceScanAlertQueue();
 }
 
-malwareModalCopy.addEventListener('click', () => window.api.copyToClipboard(currentScanAlert ? currentScanAlert.output || '' : ''));
+malwareModalCopy.addEventListener('click', async () => {
+  if (!currentScanAlert) return;
+  let output = currentScanAlert.output || '';
+  // The library payload leaves scanner logs out; read this one on demand.
+  if (!output && currentScanAlert.assetId && typeof window.api.getAssetScanOutput === 'function') {
+    try {
+      const result = await window.api.getAssetScanOutput(currentScanAlert.assetId);
+      output = (result && result.output) || '';
+      currentScanAlert.output = output;
+    } catch { /* copy an empty report rather than fail */ }
+  }
+  window.api.copyToClipboard(output);
+});
 malwareModalClose.addEventListener('click', () => advanceScanAlertQueue());
 malwareModalFlag.addEventListener('click', async () => {
   if (currentScanAlert) {
@@ -1167,10 +1205,23 @@ window.api.onMalwareScanProgress(({ active, label }) => {
   scanProgress.style.display = 'flex';
 });
 
-searchInput.addEventListener('input', () => { currentPage = 1; loadLibrary(searchInput.value); });
+// Typing re-filters the cached list; the fetch only runs when the library
+// actually changes. The short delay keeps very fast typing cheap.
+let searchTimer = null;
+searchInput.addEventListener('input', () => {
+  currentPage = 1;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { searchTimer = null; filterLibrary(searchInput.value); }, 80);
+});
+
 
 document.getElementById('btn-settings').addEventListener('click', () => {
-  window.location.href = 'settings.html';
+  // In web mode Settings is behind the access token, so carry it in the address.
+  let token = '';
+  try {
+    if (window.__BBLM_WEB__ && typeof window.api.getWebToken === 'function') token = window.api.getWebToken();
+  } catch { token = ''; }
+  window.location.href = 'settings.html' + (token ? '?token=' + encodeURIComponent(token) : '');
 });
 
 window.api.onRefreshLibrary(({ assetId } = {}) => {

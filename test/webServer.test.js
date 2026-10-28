@@ -71,7 +71,7 @@ test('web server serves the library shell and stops cleanly', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('an access token protects API routes but not the page shell', async () => {
+test('an access token keeps the library view public and protects the rest', async () => {
   const { dir, configPath } = temporaryConfig();
   const instance = await startWebServer({
     port: 0,
@@ -83,8 +83,31 @@ test('an access token protects API routes but not the page shell', async () => {
   });
   const { port } = instance.getInfo();
 
-  const denied = await request(port, '/api/config');
-  assert.equal(denied.status, 401);
+  // The library view: page shell, styles, asset list and thumbnails.
+  const page = await request(port, '/');
+  assert.equal(page.status, 200);
+  assert.equal((await request(port, '/styles.css')).status, 200);
+  const assets = await request(port, '/api/assets');
+  assert.equal(assets.status, 200);
+  assert.deepEqual(JSON.parse(assets.body), []);
+  // A thumbnail for an unknown asset is still a public route, so it is a 404.
+  assert.equal((await request(port, '/api/thumbs/unknown-asset')).status, 404);
+  assert.equal(JSON.parse((await request(port, '/api/health')).body).tokenRequired, true);
+
+  // Downloads, Free Items and configuration need the token.
+  assert.equal((await request(port, '/api/config')).status, 401);
+  assert.equal((await request(port, '/api/free-items/found')).status, 401);
+  assert.equal((await request(port, '/api/free-items/config')).status, 401);
+  assert.equal((await postJson(port, '/api/free-items/scan', {})).status, 401);
+  assert.equal((await postJson(port, '/api/download', { url: 'https://booth.pm/en/items/1' })).status, 401);
+
+  // Settings is a gated page: without the token it answers with the unlock form.
+  const lockedSettings = await request(port, '/settings.html');
+  assert.equal(lockedSettings.status, 401);
+  assert.match(lockedSettings.body, /Access token required/);
+  const openSettings = await request(port, '/settings.html?token=s3cret');
+  assert.equal(openSettings.status, 200);
+  assert.match(openSettings.body, /Remote Access/);
 
   const allowed = await request(port, '/api/config', { 'x-bblm-token': 's3cret' });
   assert.equal(allowed.status, 200);
@@ -92,9 +115,6 @@ test('an access token protects API routes but not the page shell', async () => {
 
   const queryToken = await request(port, '/api/config?token=s3cret');
   assert.equal(queryToken.status, 200);
-
-  const page = await request(port, '/');
-  assert.equal(page.status, 200);
 
   await instance.close();
   fs.rmSync(dir, { recursive: true, force: true });

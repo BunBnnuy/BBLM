@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   importAsset: opts => ipcRenderer.invoke('import-asset', opts),
   addFileToAsset: (assetId, filePath) => ipcRenderer.invoke('add-file-to-asset', { assetId, filePath }),
   getAssets: () => ipcRenderer.invoke('get-assets'),
+  getAssetScanOutput: assetId => ipcRenderer.invoke('get-asset-scan-output', assetId),
   closeModal: () => ipcRenderer.send('close-modal'),
   refreshLibrary: assetId => ipcRenderer.send('refresh-library', assetId ? { assetId } : {}),
   onImportData: cb => on('import-data', cb),

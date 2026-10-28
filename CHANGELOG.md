@@ -6,6 +6,33 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+---
+
+## [1.7.1] — 2026-10-28
+
+### Added
+
+- **Unlock from the page** — when the server has a token, the top bar shows **🔒 Unlock**. Enter the token once and this tab keeps it; **Lock this tab again** removes it. `?token=YOUR_TOKEN` still works.
+- Free Items in the browser shows a lock notice with an Unlock button when the token is missing, instead of an empty list.
+
+### Changed
+
+- **The web library opens without the token** — the library view (assets, thumbnails, tags, search, filters) is public. Downloads, Booth Free Items, malware scan answers, Settings and every other change need the access token.
+- Settings in the browser is behind the token. Without it, it answers with a small token form.
+- **The search bar is much faster** — typing filters the list already in memory instead of reloading the whole library from disk for each key. A large library no longer lags while you type.
+- **Start-up is faster** — the library index no longer carries the malware scanner logs (7.7 MB → 1.6 MB in a 468-item library), a translated title no longer forces a full library rescan, and the Booth item list is read only when the Booth database changes.
+- The malware scan report loads the scanner log from the item only when you press **Copy**.
+- An unknown or malformed static path is now a 404 instead of a file from the app folder.
+
+### Fixed
+
+- **Free Items grid cards keep their size** — a single row of cards no longer stretches to the full height of the panel.
+- **Free Items pagination follows a running scan** — when a new free item pushed the list over the page limit, the bar stayed on page 1 with the old count until the tab was reopened.
+
+---
+
 ## [1.7.0] — 2026-10-26
 
 ### Added

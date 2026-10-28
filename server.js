@@ -2,7 +2,8 @@
 // Run alone: node server.js --port 47823
 // The desktop app also starts it in-process when Settings > Remote Access is on.
 // Root folder comes from the desktop app config unless --root or BBLM_ROOT wins.
-// Internet use: bind --host 0.0.0.0 and set BBLM_TOKEN (or --token).
+// Internet use: bind --host 0.0.0.0 and set BBLM_TOKEN (or --token). The library
+// view stays public; downloads, settings and every other action need the token.
 // This keeps Electron intact. It reuses src/assetManager for the library.
 
 const http = require('http');
@@ -95,10 +96,73 @@ function serveHtmlWeb(res, filePath) {
 }
 
 function safeJoin(base, reqPath) {
-  const decoded = decodeURIComponent(reqPath.split('?')[0]);
+  let decoded;
+  try { decoded = decodeURIComponent(reqPath.split('?')[0]); } catch { return null; }
+  if (decoded.split(/[\\/]+/).includes('..')) return null;
   const joined = path.normalize(path.join(base, decoded));
   if (joined !== base && !joined.startsWith(base + path.sep)) return null;
   return joined;
+}
+
+// The library view is public: the page shell, its CSS and scripts, the asset
+// list and the thumbnails. Everything else — downloads, Free Items actions,
+// settings, configuration — needs the access token when one is configured.
+const PUBLIC_API_PATHS = new Set(['/api/health', '/api/assets']);
+const THUMB_PATH = /^\/api\/thumbs\/[^/]+$/;
+// Same data the public asset list used to carry inline.
+const SCAN_OUTPUT_PATH = /^\/api\/assets\/[^/]+\/scan-output$/;
+
+function isPublicRoute(method, pathname) {
+  if (method !== 'GET') return false;
+  // Only the library page is public. Settings and other pages need the token.
+  if (/\.html?$/i.test(pathname)) return pathname === '/' || /(^|\/)index\.html$/i.test(pathname);
+  if (pathname.startsWith('/api/')) {
+    return PUBLIC_API_PATHS.has(pathname) || THUMB_PATH.test(pathname) || SCAN_OUTPUT_PATH.test(pathname);
+  }
+  // Static page files: styles.css, scripts and icons.
+  return true;
+}
+
+// Standalone page for a gated navigation (for example Settings). It posts the
+// token back as ?token= on the same path, so no script is needed.
+function sendUnlockPage(res) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BB's LibMan — access token</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: #14141a; color: #e8e8f0; font: 14px/1.5 system-ui, sans-serif; }
+  form { width: min(420px, 100%); display: flex; flex-direction: column; gap: 14px; padding: 24px; background: #1d1d26; border: 1px solid #33333f; border-radius: 12px; }
+  h1 { margin: 0; font-size: 18px; }
+  p { margin: 0; color: #a0a0b0; font-size: 13px; }
+  label { font-size: 12px; color: #a0a0b0; }
+  input { padding: 8px 12px; background: #14141a; color: #e8e8f0; border: 1px solid #33333f; border-radius: 8px; font: inherit; }
+  input:focus { outline: none; border-color: #7c5cff; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  button { padding: 8px 16px; background: #7c5cff; color: #fff; border: 0; border-radius: 8px; font: inherit; cursor: pointer; }
+  a { color: #a0a0b0; font-size: 12px; }
+</style>
+</head>
+<body>
+<form method="get">
+  <h1>Access token required</h1>
+  <p>This page can change the library, so it is behind the access token. The library view stays open.</p>
+  <label for="token">Access token</label>
+  <input id="token" name="token" type="password" autocomplete="current-password" autofocus />
+  <div class="row"><a href="/">Back to the library</a><button type="submit">Open</button></div>
+</form>
+</body>
+</html>`;
+  const body = Buffer.from(html, 'utf8');
+  res.writeHead(401, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': body.length,
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
 }
 
 function isValidAssetId(id) {
@@ -349,8 +413,9 @@ function createWebServer(options = {}) {
     }
   }
 
-  // Optional shared token for internet use. The browser shim sends it back
-  // as a header (or ?token=). Without it, /api/* returns 401.
+  // Optional shared token. The library view is public; downloads, settings and
+  // every other action need the token. The browser shim sends it back as a
+  // header (or ?token=). Without it, those routes return 401.
   function isAuthorized(url, req) {
     if (!token) return true;
     if (req.headers['x-bblm-token'] === token) return true;
@@ -361,11 +426,17 @@ function createWebServer(options = {}) {
     const url = new URL(req.url, 'http://localhost');
 
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return sendJson(res, { ok: true, mode: 'web', version: PKG.version });
+      return sendJson(res, { ok: true, mode: 'web', version: PKG.version, tokenRequired: Boolean(token) });
     }
 
-    if (url.pathname.startsWith('/api/') && !isAuthorized(url, req)) {
-      return sendJson(res, { error: 'Unauthorized' }, 401);
+    if (!isPublicRoute(req.method, url.pathname) && !isAuthorized(url, req)) {
+      if (url.pathname.startsWith('/api/')) {
+        return sendJson(res, {
+          error: 'Access token required. Unlock the page to download, change settings, or use Free Items.',
+          tokenRequired: true,
+        }, 401);
+      }
+      return sendUnlockPage(res);
     }
 
     // ── Booth Free Items ──────────────────────────────────────────────────
@@ -521,13 +592,16 @@ function createWebServer(options = {}) {
     if (req.method === 'GET' && url.pathname === '/api/assets') {
       try {
         const hidden = store.get('hiddenAssets', []);
+        const translated = store.get('translatedTitlesEnabled', false);
         const assets = getAssets(store)
           .filter((a) => !hidden.includes(a.id) && !a.freeItemPending)
           .map((a) => {
             const hasThumb = Boolean(a.thumbnail) || Boolean(a.thumbnailPath);
             return {
               ...a,
-              displayName: displayTitle(a, store.get('translatedTitlesEnabled', false)),
+              // Scanner logs are megabytes; the page loads one on demand.
+              scanOutput: '',
+              displayName: displayTitle(a, translated),
               // Web UI uses HTTP thumbs. Electron keeps file:// paths.
               thumbnailPath: '',
               thumbnailUrl: hasThumb && isValidAssetId(a.id) ? `/api/thumbs/${encodeURIComponent(a.id)}` : (a.thumbnailUrl || ''),
@@ -537,6 +611,14 @@ function createWebServer(options = {}) {
       } catch (err) {
         return sendJson(res, { error: err.message }, 500);
       }
+    }
+
+    const scanOutputMatch = url.pathname.match(/^\/api\/assets\/([^/]+)\/scan-output$/);
+    if (req.method === 'GET' && scanOutputMatch) {
+      const assetId = decodeURIComponent(scanOutputMatch[1]);
+      if (!isValidAssetId(assetId)) return sendJson(res, { error: 'Bad id' }, 400);
+      const { getAssetScanOutput } = require('./src/assetManager');
+      return sendJson(res, { output: getAssetScanOutput(store, assetId) });
     }
 
     const thumbMatch = url.pathname.match(/^\/api\/thumbs\/([^/]+)$/);
@@ -665,9 +747,9 @@ async function main() {
   console.log(`[web] rootFolder: ${info.rootFolder || '(not set)'} (source: ${info.rootFolderSource}, desktop config: ${info.desktopFound ? 'found' : 'not found'})`);
   if (!info.rootFolder) console.log('[web] No library found. Set it with --root, BBLM_ROOT, or the desktop app Settings.');
   if (host === '0.0.0.0' || host === '::') {
-    console.log('[web] WARNING: listening on all interfaces. Set BBLM_TOKEN to require a shared token.');
+    console.log('[web] WARNING: listening on all interfaces. Set BBLM_TOKEN so downloads and settings need the token.');
   }
-  if (!token) console.log('[web] No BBLM_TOKEN set. Anyone with access to the port can read the library.');
+  if (!token) console.log('[web] No BBLM_TOKEN set. Anyone with access to the port can read the library and change it.');
 
   const stop = () => { instance.close().then(() => process.exit(0)); };
   process.on('SIGINT', stop);

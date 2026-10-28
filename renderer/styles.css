@@ -118,6 +118,41 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 .web-send-status.done { color: #3ddc84; }
 .web-send-status.error { color: var(--accent); }
 
+/* ── Web mode: access token dialog ── */
+.web-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .65);
+}
+.web-lock-modal {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, .5);
+}
+.web-lock-modal h2 { font-size: 18px; }
+.web-lock-modal p { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.web-lock-modal label { margin: 6px 0 0; }
+.web-lock-error { min-height: 18px; color: var(--accent); font-size: 12px; }
+.web-lock-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.web-lock-forget { align-self: flex-start; font-size: 11px; }
+
+/* ── Web mode: a gated tab (Free Items) without the token ── */
+.fi-locked .fi-actions,
+.fi-locked #fi-settings-panel { display: none !important; }
+.fi-lock-notice { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.fi-lock-notice p { margin: 0; color: var(--text-dim); }
+
 /* ── Search + filter wrapper ── */
 .search-wrap {
   display: flex;
@@ -1488,6 +1523,8 @@ button.scan-dot:hover { outline: 2px solid var(--border); outline-offset: 2px; }
 .fi-items-list.fi-view-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 12px;
   padding: 12px 20px;
 }

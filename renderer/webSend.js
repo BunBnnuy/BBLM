@@ -94,6 +94,7 @@
     } catch (err) {
       button.disabled = false;
       setStatus(err.message, 'error');
+      if (err.tokenRequired && typeof window.api.requestUnlock === 'function') window.api.requestUnlock();
     }
   }
 

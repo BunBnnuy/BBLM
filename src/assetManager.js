@@ -4,7 +4,7 @@ const sharp = require('sharp');
 const { download } = require('./httpClient');
 const { resolveInsideRoot, resolveExistingAssetDir, allocateAssetId, sanitizeExternalFilename } = require('./security/pathPolicy');
 const { writeJsonAtomic } = require('./atomicFs');
-const { scanDiskEntries, readIndexFile, writeIndexFile, fastThumbnailPath } = require('./assetIndex');
+const { scanDiskEntries, readIndexFile, writeIndexFile, fastThumbnailPath, indexMeta } = require('./assetIndex');
 
 // In-memory cache of the current rootFolder's asset index, populated on first
 // getAssets() call and kept in sync via touchIndexEntry/removeIndexEntry.
@@ -25,13 +25,15 @@ function materialize(rootFolder, entriesMap) {
 function touchIndexEntry(store, assetId, meta, { translationOnly = false } = {}) {
   const rootFolder = store.get('rootFolder', '');
   if (!translationOnly) savedListener(rootFolder, assetId, meta);
-  if (translationOnly) {
-    // Invalidate the disk index instead of rewriting the entire library per title.
-    try { fs.unlinkSync(path.join(rootFolder, '.blm-index.json')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (!cache || cache.rootFolder !== rootFolder) {
+    // Nothing is cached yet, so the index file on disk has no live copy to
+    // update. Drop it and let the next getAssets() rebuild from meta.json.
+    if (translationOnly) {
+      try { fs.unlinkSync(path.join(rootFolder, '.blm-index.json')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    return;
   }
-  if (!cache || cache.rootFolder !== rootFolder) return;
-  cache.entries.set(assetId, meta);
-  if (translationOnly) return;
+  cache.entries.set(assetId, indexMeta(meta));
   try { writeIndexFile(rootFolder, Object.fromEntries(cache.entries)); } catch (e) { console.error('[assetIndex] write failed:', e.message); }
 }
 
@@ -201,7 +203,11 @@ function downloadFile(url, destPath, extraHeaders = {}) {
 function registerTags(tags, store) {
   if (!tags || !tags.length) return;
   const existing = new Set(store.get('allTags', []));
+  const before = existing.size;
   tags.forEach(t => existing.add(t));
+  // Both the desktop and the web view ask for tags on every refresh, so only
+  // write when a new tag actually arrived (the config file is large).
+  if (existing.size === before) return;
   store.set('allTags', [...existing].sort((a, b) => a.localeCompare(b)));
 }
 
@@ -327,6 +333,19 @@ async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, i
   return { assetId, meta };
 }
 
+// The malware report keeps the raw scanner log out of the library payload.
+// Read it from meta.json only when the user asks for it (copy report).
+function getAssetScanOutput(store, assetId) {
+  const rootFolder = store.get('rootFolder', '');
+  try {
+    const assetDir = resolveExistingAssetDir(rootFolder, assetId);
+    const meta = JSON.parse(fs.readFileSync(path.join(assetDir, 'meta.json'), 'utf8'));
+    return typeof meta.scanOutput === 'string' ? meta.scanOutput : '';
+  } catch {
+    return '';
+  }
+}
+
 function deleteAsset({ assetId, store }) {
   const rootFolder = store.get('rootFolder', '');
   const assetDir = resolveExistingAssetDir(rootFolder, assetId);
@@ -425,7 +444,7 @@ function appendToExistingBoothAsset({ originUrl, filePath, store }) {
 
 module.exports = {
   importAsset, updateAsset, deleteAsset, getAssets, extractAssetId, downloadFile, registerTags,
-  extractBoothItemId, findExistingBoothAsset,
+  extractBoothItemId, findExistingBoothAsset, getAssetScanOutput,
   createAssetShell, finalizeAssetDownload, appendToExistingBoothAsset,
   discardIncompleteDownload, cleanupIncompleteDownloads,
   touchIndexEntry, reconcileIndex,

@@ -998,6 +998,11 @@ ipcMain.handle('acknowledge-release-notes', () => {
   return true;
 });
 
+// Reading the Booth database means booting sql.js and parsing the whole file
+// (tens of milliseconds). The library refreshes on every search keystroke, so
+// keep the mapped rows until the database file or the download folder changes.
+let boothItemsCache = null; // { key, rows }
+
 ipcMain.handle('get-booth-items', () => {
   const enabled = store.get('boothEnabled', false);
   if (!enabled) return [];
@@ -1005,6 +1010,20 @@ ipcMain.handle('get-booth-items', () => {
   // Resolve path: %AppData%/Roaming/pm.booth.library-manager/data.db
   const roamingDir = path.dirname(app.getPath('userData')); // …/Roaming
   const boothDb = path.join(roamingDir, 'pm.booth.library-manager', 'data.db');
+  const boothDownloadsFolder = store.get('boothDownloadsFolder', '');
+  const hidden = store.get('hiddenAssets', []);
+
+  let stat;
+  try {
+    stat = fs.statSync(boothDb);
+  } catch (err) {
+    console.error('[Booth] error:', err.message);
+    return { error: err.message };
+  }
+  const cacheKey = `${stat.mtimeMs}:${stat.size}:${boothDownloadsFolder}`;
+  if (boothItemsCache && boothItemsCache.key === cacheKey) {
+    return boothItemsCache.rows.filter(r => !hidden.includes('booth:' + r.boothId));
+  }
 
   try {
     const initSqlJs = require('sql.js');
@@ -1036,27 +1055,25 @@ ipcMain.handle('get-booth-items', () => {
       const allBlmTags = Object.values(tagMap).flat();
       if (allBlmTags.length) registerTags(allBlmTags, store);
 
-      const boothDownloadsFolder = store.get('boothDownloadsFolder', '');
-      const hidden = store.get('hiddenAssets', []);
+      const items = rows.map(r => {
+        const id = String(r.id);
+        const folderName = `b${r.id}`;
+        const localFolder = boothDownloadsFolder
+          ? path.join(boothDownloadsFolder, folderName)
+          : null;
+        return {
+          boothId: id,
+          name: r.name || '',
+          thumbnailUrl: r.thumbnail_url || '',
+          importedAt: r.updated_at || '',
+          localFolder: localFolder || '',
+          tags: tagMap[id] || [],
+          source: 'booth',
+        };
+      });
 
-      return rows
-        .filter(r => !hidden.includes('booth:' + String(r.id)))
-        .map(r => {
-          const id = String(r.id);
-          const folderName = `b${r.id}`;
-          const localFolder = boothDownloadsFolder
-            ? path.join(boothDownloadsFolder, folderName)
-            : null;
-          return {
-            boothId: id,
-            name: r.name || '',
-            thumbnailUrl: r.thumbnail_url || '',
-            importedAt: r.updated_at || '',
-            localFolder: localFolder || '',
-            tags: tagMap[id] || [],
-            source: 'booth',
-          };
-        });
+      boothItemsCache = { key: cacheKey, rows: items };
+      return items.filter(r => !hidden.includes('booth:' + r.boothId));
     });
   } catch (err) {
     console.error('[Booth] error:', err.message);
@@ -1204,8 +1221,17 @@ ipcMain.handle('pick-folder', async () => {
 ipcMain.handle('get-assets', () => {
   const { getAssets } = require('./src/assetManager');
   const hidden = store.get('hiddenAssets', []);
-  return getAssets(store).filter(a => !hidden.includes(a.id) && !a.freeItemPending)
-    .map(a => ({ ...a, displayName: displayTitle(a, store.get('translatedTitlesEnabled', false)) }));
+  const translated = store.get('translatedTitlesEnabled', false);
+  // Scanner logs are megabytes in total. The library view never shows them,
+  // so leave them out of every refresh and load one only on demand.
+  return getAssets(store)
+    .filter(a => !hidden.includes(a.id) && !a.freeItemPending)
+    .map(a => ({ ...a, scanOutput: '', displayName: displayTitle(a, translated) }));
+});
+
+ipcMain.handle('get-asset-scan-output', (event, assetId) => {
+  const { getAssetScanOutput } = require('./src/assetManager');
+  return { output: getAssetScanOutput(store, String(assetId || '')) };
 });
 
 ipcMain.handle('hide-asset', (event, assetId) => {

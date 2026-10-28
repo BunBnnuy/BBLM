@@ -1,7 +1,7 @@
 const { parentPort, workerData } = require('worker_threads');
 const fs = require('fs');
 const { TitleTranslations } = require('./titleTranslations');
-const { scanDiskEntries } = require('./assetIndex');
+const { scanDiskEntries, readIndexFile } = require('./assetIndex');
 const { writeJsonAtomic } = require('./atomicFs');
 
 // This file belongs only to the worker. Never open electron-store in two threads.
@@ -30,7 +30,11 @@ const worker = new TitleTranslations({
   store,
   assets: { getAssets: () => {
     const root = config.rootFolder;
-    return root && fs.existsSync(root) ? Object.values(scanDiskEntries(root)) : [];
+    if (!root || !fs.existsSync(root)) return [];
+    // The 60-second eligibility scan only needs names and saved translations,
+    // so read the shared index instead of every meta.json on disk.
+    const index = readIndexFile(root);
+    return index ? Object.values(index) : Object.values(scanDiskEntries(root));
   } },
   // Serialize small metadata commits with normal app saves to prevent lost edits.
   commit: payload => new Promise((resolve, reject) => {

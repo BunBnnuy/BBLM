@@ -6,7 +6,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.8.0] — 2026-11-24
+
+### Added
+
+- **Install the browser companion from Settings** — **Settings → Integrations → Browser Companion (Tampermonkey)** serves the userscript from a temporary loopback address and opens the Tampermonkey install page. **Copy Script** is a fallback. Tampermonkey always asks for one confirmation click.
+- **Free BOOTH items in the browser** — the companion script adds a **Download with BB's LibMan** button to free BOOTH items and sends the item through the registered `booth-library-manager://` handler.
+- **Forum downloads from pixeldrain and workupload** — the separate forum helper sends the download link and the BOOTH item link over `bunslm://external`. Pixeldrain downloads directly; workupload and Cloudflare-protected forum hidelinks open a window. Files are linked to the BOOTH asset and appended when it already exists.
+- **Archive passwords from the forum** — the forum helper reads an English password label from the topic post (`PW:`, `Password:`, `Pass =`, `PWD -`, `Archive password:`, `Passcode:`), sends it with the download, fills it on the workupload password page, and presses Confirm. BBLM saves it in `meta.json` as `archivePassword`, shows a 🔑 badge on the card (click to copy), and adds the field to the asset window. Lines such as "if the password is wrong" are ignored.
+- **The external download window runs itself** — BBLM clicks Download, closes ad overlays that block the page and tries again, minimizes the window when the download starts, and closes it when every file is done. If no download starts within 10 seconds, the window comes back to the front.
 
 ---
 

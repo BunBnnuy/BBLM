@@ -106,6 +106,20 @@
         </div>
 
         <div class="settings-section">
+          <h3>Browser Companion (Tampermonkey)</h3>
+          <p>Install a small Tampermonkey script that adds a <strong>Download with BB's LibMan</strong> button to free BOOTH items. Tampermonkey must be installed. The browser opens a confirmation page; press <strong>Install</strong> once. The <code>booth-library-manager://</code> handler must be on.</p>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="btn-install-userscript">Install Tampermonkey Script</button>
+            <button class="btn-ghost" id="btn-copy-userscript">Copy Script</button>
+          </div>
+          <div id="userscript-status" class="settings-help">Checking the URL handler...</div>
+          <div id="userscript-scheme-warning" class="settings-help" hidden>
+            The <code>booth-library-manager://</code> handler is off. The button cannot open BB's LibMan without it.
+            <button class="btn-ghost" id="btn-enable-userscript-scheme">Enable Handler</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
           <h3>Unity Import</h3>
           <p>Import the companion package into any Unity project once, and it will show up here automatically whenever that project is open. Then right-click an archive asset and choose "Import to Unity" to select files and a target project.</p>
           <div class="settings-actions">

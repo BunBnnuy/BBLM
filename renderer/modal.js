@@ -20,6 +20,7 @@ const tagPills     = document.getElementById('tag-pills');
 const tagInput     = document.getElementById('tag-input');
 const tagSuggestions = document.getElementById('tag-suggestions');
 const isAdultCheckbox = document.getElementById('is-adult');
+const archivePasswordInput = document.getElementById('archive-password');
 
 // ── Tag editor ──────────────────────────────────────────────────────────────
 function renderTags() {
@@ -83,6 +84,16 @@ function escHtml(str) {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 loadTagSuggestions();
+
+document.getElementById('btn-copy-password').addEventListener('click', async () => {
+  const value = archivePasswordInput.value.trim();
+  if (!value) {
+    setStatus('No password to copy.', 'error');
+    return;
+  }
+  await window.api.copyToClipboard(value);
+  setStatus('Password copied.', 'success');
+});
 
 function setStatus(msg, type = 'info') {
   statusEl.textContent = msg;
@@ -168,6 +179,7 @@ window.api.onImportData((data) => {
 
     if (data.originUrl) originInput.value = data.originUrl;
     if (data.name)      nameInput.value   = data.name;
+    archivePasswordInput.value = data.archivePassword || '';
     setTags(data.tags || []);
     isAdultCheckbox.checked = !!data.isAdult;
 
@@ -189,6 +201,7 @@ window.api.onImportData((data) => {
   } else {
     renderAssetSuggestions();
     if (data.originUrl) originInput.value = data.originUrl;
+    if (data.archivePassword) archivePasswordInput.value = data.archivePassword;
     if (data.fileName)  fileInput.value   = data.fileName;
     if (data.originUrl) autoFillName(data.originUrl);
 
@@ -292,7 +305,7 @@ btnImport.addEventListener('click', async () => {
     setStatus('⏳ Saving…', 'info');
     btnImport.disabled = true;
     try {
-      const result = await window.api.updateAsset({ assetId: editAssetId, name: assetName, originUrl, selectedImageUrl, tags, isAdult });
+      const result = await window.api.updateAsset({ assetId: editAssetId, name: assetName, originUrl, selectedImageUrl, tags, isAdult, archivePassword: archivePasswordInput.value.trim() });
       setStatus('✔ Saved "' + result.meta.name + '"', 'success');
       window.api.refreshLibrary(result.assetId);
       setTimeout(() => window.api.closeModal(), 1200);
@@ -309,7 +322,7 @@ btnImport.addEventListener('click', async () => {
       if (!originUrl) return setStatus('Origin URL is required.', 'error');
       setStatus('⏳ Importing…', 'info');
       try {
-        const result = await window.api.importAsset({ originUrl, filePath: resolvedFilePaths[0], selectedImageUrl, assetName: assetName || null, tags, isAdult });
+        const result = await window.api.importAsset({ originUrl, filePath: resolvedFilePaths[0], selectedImageUrl, assetName: assetName || null, tags, isAdult, archivePassword: archivePasswordInput.value.trim() });
         setStatus('✔ Imported as "' + result.meta.name + '" (ID: ' + result.assetId + ')', 'success');
         window.api.refreshLibrary(result.assetId);
         setTimeout(() => window.api.closeModal(), 1500);
@@ -342,7 +355,7 @@ btnImport.addEventListener('click', async () => {
             if (result && result.error) throw new Error(result.error);
             window.api.refreshLibrary(sharedAssetId);
           } else {
-            const result = await window.api.importAsset({ originUrl: originUrl || '', filePath: fp, selectedImageUrl, assetName: name, tags, isAdult });
+            const result = await window.api.importAsset({ originUrl: originUrl || '', filePath: fp, selectedImageUrl, assetName: name, tags, isAdult, archivePassword: archivePasswordInput.value.trim() });
             sharedAssetId = result.assetId;
             window.api.refreshLibrary(result.assetId);
           }

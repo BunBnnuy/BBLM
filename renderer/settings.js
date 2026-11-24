@@ -26,6 +26,11 @@ const webServerToken = document.getElementById('web-server-token');
 const webServerStatus = document.getElementById('web-server-status');
 const clearWebTokenButton = document.getElementById('btn-clear-web-token');
 const openWebLibraryButton = document.getElementById('btn-open-web-library');
+const installUserscriptButton = document.getElementById('btn-install-userscript');
+const copyUserscriptButton = document.getElementById('btn-copy-userscript');
+const enableUserscriptSchemeButton = document.getElementById('btn-enable-userscript-scheme');
+const userscriptStatus = document.getElementById('userscript-status');
+const userscriptSchemeWarning = document.getElementById('userscript-scheme-warning');
 const settingsTabs = Array.from(document.querySelectorAll('.settings-tab'));
 
 function selectSettingsTab(tab) {
@@ -81,6 +86,22 @@ function setSchemeToggle(btn, enabled) {
   btn.setAttribute('aria-checked', String(enabled));
   btn.classList.toggle('btn-primary', enabled);
   btn.classList.toggle('btn-ghost', !enabled);
+}
+
+let boothSchemeRegistered = false;
+
+function setUserscriptStatus(message, isError = false) {
+  userscriptStatus.textContent = message;
+  userscriptStatus.style.color = isError ? 'var(--accent)' : '';
+}
+
+function renderUserscriptScheme() {
+  userscriptSchemeWarning.hidden = boothSchemeRegistered;
+  if (boothSchemeRegistered) {
+    setUserscriptStatus('Ready. Tampermonkey must be installed in your browser.');
+  } else {
+    setUserscriptStatus('Turn on the URL handler to use the companion script.', true);
+  }
 }
 
 function setMalwareScanToggle(enabled) {
@@ -139,6 +160,10 @@ function applyWebModeLock() {
   webServerToken.disabled = true;
   clearWebTokenButton.disabled = true;
   openWebLibraryButton.disabled = true;
+  installUserscriptButton.disabled = true;
+  copyUserscriptButton.disabled = true;
+  userscriptSchemeWarning.hidden = true;
+  setUserscriptStatus('Available in the desktop app.');
 }
 
 
@@ -196,8 +221,10 @@ boothToggle.addEventListener('click', () => {
 schemeBoothToggle.addEventListener('click', async () => {
   const current = schemeBoothToggle.getAttribute('aria-checked') === 'true';
   const next = !current;
-  await window.api.setScheme('booth-library-manager', next);
-  setSchemeToggle(schemeBoothToggle, next);
+  const registered = await window.api.setScheme('booth-library-manager', next);
+  boothSchemeRegistered = registered === true;
+  setSchemeToggle(schemeBoothToggle, boothSchemeRegistered);
+  renderUserscriptScheme();
 });
 
 schemeBunsToggle.addEventListener('click', async () => {
@@ -212,6 +239,45 @@ schemeVroidToggle.addEventListener('click', async () => {
   const next = !current;
   await window.api.setScheme('vroid.closet', next);
   setSchemeToggle(schemeVroidToggle, next);
+});
+
+enableUserscriptSchemeButton.addEventListener('click', async () => {
+  const registered = await window.api.setScheme('booth-library-manager', true);
+  boothSchemeRegistered = registered === true;
+  setSchemeToggle(schemeBoothToggle, boothSchemeRegistered);
+  renderUserscriptScheme();
+});
+
+installUserscriptButton.addEventListener('click', async () => {
+  if (window.__BBLM_WEB__) return;
+  if (!boothSchemeRegistered) {
+    setUserscriptStatus('Turn on the URL handler first.', true);
+    return;
+  }
+  installUserscriptButton.disabled = true;
+  setUserscriptStatus('Opening your browser...');
+  try {
+    const result = await window.api.installUserscript();
+    if (result && result.ok) {
+      setUserscriptStatus('Waiting for Tampermonkey. Press Install in the browser tab. If no tab opens, install Tampermonkey or use Copy Script.');
+    } else {
+      setUserscriptStatus((result && result.error) || 'The browser could not be opened.', true);
+    }
+  } catch (error) {
+    setUserscriptStatus(error.message || 'The browser could not be opened.', true);
+  } finally {
+    setTimeout(() => { installUserscriptButton.disabled = false; }, 4000);
+  }
+});
+
+copyUserscriptButton.addEventListener('click', async () => {
+  if (window.__BBLM_WEB__) return;
+  const result = await window.api.copyUserscript();
+  if (result && result.ok) {
+    setUserscriptStatus('Script copied. In Tampermonkey, create a new script and paste it.');
+  } else {
+    setUserscriptStatus((result && result.error) || 'The script could not be copied.', true);
+  }
 });
 
 webServerToggle.addEventListener('click', async () => {
@@ -333,9 +399,11 @@ async function load() {
   }
 
   const schemes = await window.api.getSchemeStatus();
-  setSchemeToggle(schemeBoothToggle, schemes['booth-library-manager'] || false);
+  boothSchemeRegistered = schemes['booth-library-manager'] === true;
+  setSchemeToggle(schemeBoothToggle, boothSchemeRegistered);
   setSchemeToggle(schemeBunsToggle, schemes['BunsLM'] || false);
   setSchemeToggle(schemeVroidToggle, schemes['vroid.closet'] || false);
+  renderUserscriptScheme();
 
   const webStatus = await window.api.getWebServerStatus();
   webServerPort.value = String(webStatus.port);

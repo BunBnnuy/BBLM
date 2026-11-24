@@ -137,6 +137,27 @@ Open your library in a browser on the same network, or on the same computer, wit
 - **Malware scan answers are saved** — the scan popup works in the browser too. **Mark as Safe** and **Mark as Unsafe** are written to the item, so the popup does not ask again on the next visit
 - An optional access token protects downloads, Booth Free Items, scan answers, and Settings. The library view stays public, so anyone who can reach the port can look through the assets; without a token they can also change the library. Open the page as `http://address:port/?token=YOUR_TOKEN`, or press **🔒 Unlock** in the page
 
+### 🧩 Browser Companion (Tampermonkey)
+Add a **Download with BB's LibMan** button to free BOOTH items in your normal browser:
+
+- Open **Settings → Integrations → Browser Companion (Tampermonkey)** and press **Install Tampermonkey Script**
+- The app serves the script from a temporary local address and opens your browser. Tampermonkey shows its install page; press **Install** once. No account or server is involved
+- **Copy Script** is a fallback: in Tampermonkey, create a new script and paste it
+- The companion uses the registered `booth-library-manager://` handler. Turn it on in **Settings → General → URL Schemes** if it is off
+- The button appears only when the BOOTH page has a free download link. A click sends the item to the desktop app, which downloads it with your saved Booth session
+- Requires Tampermonkey in Firefox, Chrome, Edge, or another Chromium browser. A browser cannot install a userscript without the confirmation click
+
+### 📥 Forum Downloads (pixeldrain / workupload)
+The separate BOOTH Forum Link Helper can send a forum download to BB's LibMan:
+
+- It sends the download URL, the BOOTH item link, and any archive password found in the topic over `bunslm://external`
+- Pixeldrain downloads directly through its API
+- Workupload and Cloudflare-protected `/hidelinks/` links open a window. BB's LibMan fills and confirms the password page, clicks **Download**, dismisses ad overlays, minimizes the window when the download starts, and closes it when every file is done. If nothing starts within 10 seconds, the window comes back so you can help
+- The password is read from an English label in the post (`PW:`, `Password:`, `Pass =`, `PWD -`, `Archive password:`). It is saved in `meta.json` as `archivePassword`, shown as a 🔑 badge on the asset card (click to copy), and editable in the asset window
+- The file is linked to the BOOTH item. If the asset already exists, the file is appended to it
+- Enable `BunsLM://` in **Settings → General → URL Schemes**
+- Only `pixeldrain.com` and `workupload.com` are accepted
+
 ### 🔄 Automatic Updates
 - On launch, BB's LibMan checks GitHub Releases for a newer version, downloads it silently in the background, and installs it the next time the app quits — no manual download needed
 
@@ -291,7 +312,8 @@ In Settings → **URL Schemes**, toggle on any scheme to register BB's LibMan as
 │   └── booth.png
 ├── test/                    # node --test regression suite
 └── companion/
-    ├── RSLimMan.user.js               # Tampermonkey companion script (optional)
+    ├── BBLM.user.js                   # Tampermonkey companion (free BOOTH items)
+    ├── RSLimMan.user.js               # Legacy generic download-import script
     └── unity/
         ├── BBLM_Importer.cs           # Unity Editor script (project detection + auto-import)
         ├── BBLM_Importer.unitypackage # Prebuilt package to import into a Unity project

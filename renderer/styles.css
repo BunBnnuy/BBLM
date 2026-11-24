@@ -499,6 +499,22 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 .asset-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .asset-date { font-size: 11px; color: var(--text-dim); margin-top: 4px; display: flex; align-items: center; gap: 6px; }
 
+.card-password {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.card-password:hover { color: #fff; background: var(--accent2); }
+
 .scan-dot {
   display: inline-block;
   width: 7px;

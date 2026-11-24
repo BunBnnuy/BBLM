@@ -132,4 +132,6 @@ contextBridge.exposeInMainWorld('api', {
   getWebServerStatus: () => ipcRenderer.invoke('get-web-server-status'),
   setWebServer: (config) => ipcRenderer.invoke('set-web-server', config),
   openWebLibrary: () => ipcRenderer.invoke('open-web-library'),
+  installUserscript: () => ipcRenderer.invoke('install-userscript'),
+  copyUserscript: () => ipcRenderer.invoke('copy-userscript'),
 });

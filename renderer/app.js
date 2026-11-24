@@ -652,6 +652,10 @@ function renderLibrary(filter = '') {
       ? `<button class="card-origin-link" title="Open original listing" aria-label="Open original listing">↗</button>`
       : '';
 
+    const passwordHtml = asset.archivePassword
+      ? `<span class="card-password" title="Archive password - click to copy">🔑 ${escHtml(asset.archivePassword)}</span>`
+      : '';
+
     const scanBadgeHtml = isConcerning
       ? `<button class="scan-badge scan-badge--${asset.scanStatus}" title="${asset.scanMarkedSafe ? 'Marked safe by you — click for details' : 'Malware scan flagged this asset — click for details'}">⚠</button>`
       : '';
@@ -701,8 +705,19 @@ function renderLibrary(filter = '') {
       <div class="asset-info">
         <div class="asset-name" title="${escHtml(asset.name)}">${escHtml(asset.displayName || asset.name)}</div>
         ${tagHtml}
+        ${passwordHtml}
         <div class="asset-date">${date}${scanDotHtml}</div>
       </div>`;
+
+    const passwordEl = card.querySelector('.card-password');
+    if (passwordEl) {
+      passwordEl.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        await window.api.copyToClipboard(asset.archivePassword);
+        passwordEl.textContent = '🔑 Copied';
+        setTimeout(() => { passwordEl.textContent = `🔑 ${asset.archivePassword}`; }, 1200);
+      });
+    }
 
     // ── Click handling: delay single-click to disambiguate from double-click ──
     let clickTimer = null;

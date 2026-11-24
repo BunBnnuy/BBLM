@@ -211,7 +211,12 @@ function registerTags(tags, store) {
   store.set('allTags', [...existing].sort((a, b) => a.localeCompare(b)));
 }
 
-async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, isAdult, store }) {
+function normalizeArchivePassword(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 128);
+}
+
+async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, tags, isAdult, archivePassword, store }) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
@@ -262,6 +267,7 @@ async function importAsset({ originUrl, filePath, selectedImageUrl, assetName, t
     importedAt: new Date().toISOString(),
     tags: tags || [],
     isAdult: !!isAdult,
+    ...(normalizeArchivePassword(archivePassword) ? { archivePassword: normalizeArchivePassword(archivePassword) } : {}),
   };
   try {
     writeJsonAtomic(path.join(assetDir, 'meta.json'), meta);
@@ -296,7 +302,7 @@ function getAssets(store) {
   return materialize(rootFolder, cache.entries);
 }
 
-async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, isAdult, store }) {
+async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, isAdult, archivePassword, store }) {
   const rootFolder = store.get('rootFolder', '');
   const assetDir = resolveExistingAssetDir(rootFolder, assetId);
   const metaPath = path.join(assetDir, 'meta.json');
@@ -310,6 +316,11 @@ async function updateAsset({ assetId, name, originUrl, selectedImageUrl, tags, i
     registerTags(tags, store);
   }
   if (isAdult !== undefined) meta.isAdult = !!isAdult;
+  if (archivePassword !== undefined) {
+    const normalized = normalizeArchivePassword(archivePassword);
+    if (normalized) meta.archivePassword = normalized;
+    else delete meta.archivePassword;
+  }
 
   if (selectedImageUrl) {
     const rawPath = path.join(assetDir, 'thumbnail_raw.tmp');
@@ -356,7 +367,7 @@ function deleteAsset({ assetId, store }) {
   return { assetId };
 }
 
-async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store }) {
+async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, archivePassword, store }) {
   const rootFolder = store.get('rootFolder', '');
   if (!rootFolder) throw new Error('Root folder not configured.');
   if (!fs.existsSync(rootFolder)) throw new Error('Root folder does not exist: ' + rootFolder);
@@ -395,6 +406,7 @@ async function createAssetShell({ originUrl, assetName, selectedImageUrl, tags, 
     importedAt: new Date().toISOString(),
     tags: tags || [],
     isAdult: !!isAdult,
+    ...(normalizeArchivePassword(archivePassword) ? { archivePassword: normalizeArchivePassword(archivePassword) } : {}),
     downloadStatus: 'pending',
   };
   writeJsonAtomic(path.join(assetDir, 'meta.json'), meta);

@@ -8,7 +8,9 @@ const Store = require('electron-store');
 const { autoUpdater } = require('electron-updater');
 const logger = require('./src/logger');
 const { DownloadsMonitor } = require('./src/downloadsMonitor');
-const { parseDownloadProtocol, parseImportIntent } = require('./src/protocol');
+const { parseDownloadProtocol, parseImportIntent, parseExternalDownload } = require('./src/protocol');
+const { classifyExternalUrl, pixeldrainInfoUrl, pixeldrainDownloadUrl } = require('./src/externalDownload');
+const { request: secureRequest } = require('./src/httpClient');
 const { resolveExistingAssetDir, resolveAssetFile, sanitizeExternalFilename } = require('./src/security/pathPolicy');
 const { writeJsonAtomic, cleanupStaging } = require('./src/atomicFs');
 const { ensureScannerUpdated } = require('./src/malwareScanner');
@@ -19,6 +21,7 @@ const { autoSelectedCandidate, extractBoothEvidence, initialOrigin, searchBooth 
 const { createUpdatePromptOptions, shouldInstallNow } = require('./src/updatePrompt');
 const { createShowcaseSnapshot, publishShowcaseSnapshot } = require('./src/showcaseSnapshot');
 const { LibraryWebServer, DEFAULT_PORT, normalizePort } = require('./src/webServer');
+const { buildUserscript, startUserscriptServer } = require('./src/userscript');
 
 const store = new Store();
 const { displayTitle, needsTranslation } = require('./src/titleTranslations');
@@ -482,7 +485,7 @@ class DownloadQueue {
     const existingAsset = findExistingBoothAsset({ originUrl, itemId, store });
     const shell = existingAsset
       ? { assetId: existingAsset.id, meta: existingAsset, isExisting: true }
-      : await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store });
+      : await createAssetShell({ originUrl, assetName, selectedImageUrl, tags, isAdult, store, archivePassword: item.archivePassword });
     item.assetId = shell.assetId;
     if (!shell.isExisting && mainWindow) mainWindow.webContents.send('refresh-library', { assetId: shell.assetId });
 
@@ -496,14 +499,41 @@ class DownloadQueue {
     // Phase 2: download file
     if (mainWindow) mainWindow.setTitle(`BB's LibMan — Downloading ${fileName}…`);
 
-    await downloadWithProgress(dlUrl, destPath, itemId, 0, (percent) => {
+    const reportProgress = (percent) => {
       item.percent = percent;
       this._notify();
       this._reportProgress(item.id, percent);
       if (mainWindow) mainWindow.webContents.send('asset-download-progress', { assetId: shell.assetId, percent });
-    });
+    };
 
-    finalizeAssetDownload({ assetId: shell.assetId, filePath: destPath, store });
+    let downloadedPaths = [destPath];
+    if (item.externalWindow) {
+      downloadedPaths = await downloadExternalWithWindow({
+        pageUrl: item.pageUrl,
+        tmpDir,
+        onProgress: reportProgress,
+        title: item.windowTitle,
+        archivePassword: item.archivePassword,
+      });
+    } else {
+      await downloadWithProgress(dlUrl, destPath, itemId, 0, reportProgress, {
+        referer: item.external ? false : 'https://booth.pm/',
+      });
+    }
+
+    for (const filePath of downloadedPaths) {
+      finalizeAssetDownload({ assetId: shell.assetId, filePath, store });
+    }
+
+    if (item.archivePassword && shell.isExisting) {
+      try {
+        const { updateAsset } = require('./src/assetManager');
+        await updateAsset({ assetId: shell.assetId, archivePassword: item.archivePassword, store });
+      } catch (error) {
+        logger.warn('archive-password-save-failed', { message: error.message });
+      }
+    }
+
     runMalwareScanForAsset(shell.assetId);
 
     // If this came from the free items scraper, mark it as pending review
@@ -552,13 +582,88 @@ class DownloadQueue {
 
 const downloadQueue = new DownloadQueue();
 
+async function handleExternalDownload(intent) {
+  const target = classifyExternalUrl(intent.url);
+  if (!target) throw new Error('Unsupported download host');
+
+  if (target.host === 'pixeldrain') {
+    let info = null;
+    try {
+      const response = await secureRequest(pixeldrainInfoUrl(target.id), {
+        maxBytes: 64 * 1024,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'application/json',
+        },
+      });
+      info = JSON.parse(response.body.toString('utf8'));
+    } catch (error) {
+      logger.warn('pixeldrain-info-failed', { message: error.message });
+    }
+
+    const fallback = intent.filename || `pixeldrain-${target.id}.zip`;
+    const fileName = sanitizeExternalFilename(
+      info && typeof info.name === 'string' && info.name ? info.name : fallback
+    );
+    const queueId = downloadQueue.add({
+      dlUrl: pixeldrainDownloadUrl(target.id),
+      fileName,
+      itemId: intent.itemId,
+      originUrl: intent.originUrl,
+      external: true,
+      host: 'pixeldrain',
+      archivePassword: intent.archivePassword,
+    });
+    logger.info('external-download-queued', { host: 'pixeldrain', queueId });
+    return;
+  }
+
+  if (target.host === 'workupload' || target.host === 'hidelink') {
+    const isHidelink = target.host === 'hidelink';
+    const fileName = sanitizeExternalFilename(
+      intent.filename || (isHidelink ? 'forum-download.zip' : 'workupload-download.zip')
+    );
+    const queueId = downloadQueue.add({
+      dlUrl: intent.url,
+      fileName,
+      itemId: intent.itemId,
+      originUrl: intent.originUrl,
+      external: true,
+      host: isHidelink ? 'forum' : 'workupload',
+      externalWindow: true,
+      pageUrl: intent.url,
+      archivePassword: intent.archivePassword,
+      windowTitle: isHidelink
+        ? 'Forum download - pass the check, download files, then close this window'
+        : 'Workupload - Download files, then close this window',
+    });
+    logger.info('external-download-queued', { host: target.host, queueId });
+    return;
+  }
+}
+
 function handleUrl(url) {
   if (!url) return;
   try {
     const intent = parseImportIntent(url);
     pendingImportIntents.set(intent.filename.toLowerCase(), { ...intent, expiresAt: Date.now() + 10 * 60 * 1000 });
     return;
-  } catch (_) { /* Try a download protocol next. */ }
+  } catch (_) { /* Try an external download next. */ }
+  try {
+    const external = parseExternalDownload(url);
+    handleExternalDownload(external).catch((error) => {
+      logger.warn('external-download-failed', { message: error.message });
+      if (mainWindow && store.get('notificationsEnabled', true)) {
+        new Notification({
+          title: "BB's LibMan — Download Failed",
+          body: error.message,
+          icon: ICON,
+          silent: false,
+        }).show();
+      }
+    });
+    return;
+  } catch (_) { /* Try a Booth download protocol next. */ }
   try {
     const parsed = parseDownloadProtocol(url);
     if (parsed.scheme === 'vroid.closet' || parsed.scheme === 'booth-library-manager') {
@@ -657,7 +762,7 @@ if (!gotTheLock) {
   app.on('quit', () => { monitor.stop(); if (backlogScanTimer) clearInterval(backlogScanTimer); });
 }
 
-function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgress = null) {
+function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgress = null, downloadOptions = {}) {
   const https = require('https');
 
   if (redirectCount > 5) return Promise.reject(new Error('Too many redirects'));
@@ -670,14 +775,15 @@ function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgre
 
   return new Promise((resolve, reject) => {
     const proto = https;
-    const options = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/octet-stream, application/zip, application/x-zip-compressed, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://booth.pm/',
-      },
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'application/octet-stream, application/zip, application/x-zip-compressed, */*',
+      'Accept-Language': 'en-US,en;q=0.9',
     };
+    if (downloadOptions.referer !== false) {
+      headers.Referer = downloadOptions.referer || 'https://booth.pm/';
+    }
+    const options = { headers };
 
     proto.get(url, options, res => {
       const { statusCode, headers } = res;
@@ -698,11 +804,11 @@ function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgre
         } catch (err) {
           return reject(new Error(`Unsafe download redirect: ${err.message}`));
         }
-        // Reject if redirect leads to auth/login page
-        if (/accounts\.|login|signin|auth/i.test(redirectUrl)) {
+        // Reject if redirect leads to an auth/login page (Booth flow only).
+        if (downloadOptions.referer !== false && /accounts\.|login|signin|auth/i.test(redirectUrl)) {
           return reject(new Error('Download URL requires authentication — the link may have expired. Please re-download from Booth.'));
         }
-        return downloadWithProgress(redirectUrl, destPath, itemId, redirectCount + 1, onProgress).then(resolve).catch(reject);
+        return downloadWithProgress(redirectUrl, destPath, itemId, redirectCount + 1, onProgress, downloadOptions).then(resolve).catch(reject);
       }
 
       if (statusCode !== 200) {
@@ -750,6 +856,329 @@ function downloadWithProgress(url, destPath, itemId, redirectCount = 0, onProgre
       file.on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
       res.on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
     }).on('error', err => { fs.unlink(destPath, () => {}); reject(err); });
+  });
+}
+
+function downloadExternalWithWindow({ pageUrl, tmpDir, onProgress, title = 'Download files, then close this window', archivePassword = '' }) {
+  return new Promise((resolve, reject) => {
+    const win = new BrowserWindow({
+      width: 980,
+      height: 760,
+      show: true,
+      parent: mainWindow || undefined,
+      icon: ICON,
+      title,
+      autoHideMenuBar: true,
+      webPreferences: {
+        partition: 'persist:external-downloads',
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+      },
+    });
+
+    let settled = false;
+    let timeout = null;
+    let downloadSeq = 0;
+    let activeDownloads = 0;
+    let backgrounded = false;
+    let autoClickTimer = null;
+    let autoClickAttempts = 0;
+    let archiveTried = false;
+    let filesTried = false;
+    let passwordTried = false;
+    let closeClicks = 0;
+    let closeTimer = null;
+    const downloads = [];
+    const session = win.webContents.session;
+
+    win.once('ready-to-show', () => {
+      if (win.isDestroyed()) return;
+      win.show();
+      win.focus();
+    });
+
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      if (autoClickTimer) clearTimeout(autoClickTimer);
+      if (closeTimer) clearTimeout(closeTimer);
+      session.removeListener('will-download', onWillDownload);
+    };
+
+    const finish = (error, files) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (!win.isDestroyed()) win.destroy();
+      if (error) reject(error);
+      else resolve(files);
+    };
+
+    const armTimeout = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        if (activeDownloads > 0) {
+          armTimeout();
+          return;
+        }
+        if (downloads.length > 0) finish(null, downloads);
+        else finish(new Error('Workupload download timed out'));
+      }, 15 * 60 * 1000);
+    };
+
+    const clearCloseTimer = () => {
+      if (closeTimer) clearTimeout(closeTimer);
+      closeTimer = null;
+    };
+
+    const scheduleClose = () => {
+      clearCloseTimer();
+      if (downloads.length === 0 || activeDownloads > 0) return;
+      closeTimer = setTimeout(() => {
+        if (activeDownloads === 0 && downloads.length > 0) finish(null, downloads);
+      }, 2000);
+    };
+
+    const clickAt = (x, y) => {
+      if (settled || win.isDestroyed()) return;
+      win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    };
+
+    const findTargets = () => win.webContents.executeJavaScript(`(() => {
+      const elements = [...document.querySelectorAll('a, button, input[type="submit"]')];
+      const text = (el) => ((el.textContent || el.value || '') + ' ' + (el.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+      const center = (el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return null;
+        const x = Math.round(rect.left + rect.width / 2);
+        const y = Math.round(rect.top + rect.height / 2);
+        if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && hit !== el && !el.contains(hit)) return null;
+        return { x, y };
+      };
+      const archive = elements.find((el) => text(el).includes('download archive'));
+      const files = elements
+        .filter((el) => {
+          const value = text(el);
+          return value === 'download' || (value.includes('download') && !value.includes('archive'));
+        })
+        .map(center)
+        .filter(Boolean);
+      const passwordInput = document.querySelector('input[type="password"]');
+      const confirm = elements.find((el) => /^(confirm|submit|continue|unlock|open)$/i.test(text(el)));
+      const password = passwordInput
+        ? { input: center(passwordInput), confirm: confirm ? center(confirm) : null }
+        : null;
+      const closes = [...document.querySelectorAll('a, button, [role="button"], span, div')]
+        .filter((el) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0 || rect.width > 400 || rect.height > 160) return false;
+          const value = text(el);
+          if (/^(close|×|✕|x|skip|skip ad|dismiss|no thanks|continue to download)$/i.test(value)) return true;
+          return /(close|dismiss|skip)/i.test(el.getAttribute('aria-label') || '');
+        })
+        .map((el) => {
+          const point = center(el);
+          return point ? { ...point, label: (el.className || el.tagName) + ':' + text(el).slice(0, 40) } : null;
+        })
+        .filter(Boolean);
+      return { password, archive: archive ? center(archive) : null, files, closes };
+    })()`, true);
+
+    const enterPassword = (target) => {
+      if (!archivePassword || !target || !target.input) return;
+      const value = JSON.stringify(archivePassword);
+      const script = `(() => {
+        const input = document.querySelector('input[type="password"]');
+        if (!input) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(input, ${value});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.focus();
+        return input.value === ${value};
+      })()`;
+      win.webContents.executeJavaScript(script, true).then((ok) => {
+        if (!ok) return;
+        if (target.confirm) {
+          clickAt(target.confirm.x, target.confirm.y);
+        } else {
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+        }
+      }).catch(() => {});
+    };
+
+    const clickFiles = (points) => {
+      if (filesTried || settled) return;
+      filesTried = true;
+      points.forEach((point, index) => {
+        setTimeout(() => clickAt(point.x, point.y), index * 900);
+      });
+      console.log('[external-window] auto-click files:', points.length);
+    };
+
+    const showIfNoDownload = (delayMs) => {
+      setTimeout(() => {
+        if (settled || downloads.length > 0 || activeDownloads > 0) return;
+        try {
+          win.restore();
+          win.show();
+          win.focus();
+        } catch {
+          // The window may already be gone.
+        }
+        console.log('[external-window] no download started; window left visible');
+      }, delayMs);
+    };
+
+    const autoClickDownload = async () => {
+      if (settled || downloads.length > 0 || activeDownloads > 0) return;
+      let targets = null;
+      try {
+        targets = await findTargets();
+      } catch {
+        targets = null;
+      }
+      if (targets && targets.password && targets.password.input && !passwordTried) {
+        passwordTried = true;
+        enterPassword(targets.password);
+        console.log('[external-window] password submitted');
+        showIfNoDownload(10000);
+        return;
+      }
+      if (targets && targets.archive && !archiveTried) {
+        archiveTried = true;
+        clickAt(targets.archive.x, targets.archive.y);
+        console.log('[external-window] auto-click archive at', targets.archive);
+        showIfNoDownload(10000);
+        return;
+      }
+      if (targets && targets.files.length > 0 && !filesTried) {
+        clickFiles(targets.files);
+        showIfNoDownload(10000);
+        autoClickTimer = setTimeout(autoClickDownload, 8000);
+        return;
+      }
+      if (targets && targets.closes.length > 0 && closeClicks < 3) {
+        closeClicks += 1;
+        clickAt(targets.closes[0].x, targets.closes[0].y);
+        console.log('[external-window] dismissed overlay:', targets.closes[0].label);
+        filesTried = false;
+        archiveTried = false;
+        autoClickAttempts = 0;
+        autoClickTimer = setTimeout(autoClickDownload, 2500);
+        return;
+      }
+      autoClickAttempts += 1;
+      if (autoClickAttempts < 20 && !settled) autoClickTimer = setTimeout(autoClickDownload, 1500);
+    };
+
+    const startAutoClick = () => {
+      if (settled || downloads.length > 0 || activeDownloads > 0) return;
+      if (autoClickTimer) clearTimeout(autoClickTimer);
+      autoClickAttempts = 0;
+      autoClickTimer = setTimeout(autoClickDownload, 1500);
+    };
+
+    const onWillDownload = (_event, item) => {
+      activeDownloads += 1;
+      downloadSeq += 1;
+      clearCloseTimer();
+      if (!backgrounded) {
+        backgrounded = true;
+        try {
+          win.minimize();
+        } catch {
+          // The window may already be gone.
+        }
+      }
+      let name = 'workupload-download.zip';
+      try {
+        name = sanitizeExternalFilename(item.getFilename() || name);
+      } catch {
+        // Keep the fallback name.
+      }
+      const subdir = path.join(tmpDir, `workupload-${Date.now()}-${downloadSeq}`);
+      fs.mkdirSync(subdir, { recursive: true });
+      const savePath = path.join(subdir, name);
+      item.setSavePath(savePath);
+      item.on('updated', (_e, state) => {
+        if (state === 'progressing' && item.getTotalBytes() > 0) {
+          onProgress(Math.round((item.getReceivedBytes() / item.getTotalBytes()) * 100));
+        }
+      });
+      item.on('done', (_e, state) => {
+        activeDownloads = Math.max(0, activeDownloads - 1);
+        if (state === 'completed') {
+          downloads.push(savePath);
+          scheduleClose();
+        } else {
+          try {
+            win.restore();
+            win.show();
+            win.focus();
+          } catch {
+            // The window may already be gone.
+          }
+        }
+      });
+    };
+
+    session.on('will-download', onWillDownload);
+
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === 'https:' && (
+          parsed.hostname === 'workupload.com'
+          || parsed.hostname.endsWith('.workupload.com')
+          || parsed.hostname === 'forum.ripper.store'
+          || parsed.hostname.endsWith('.forum.ripper.store')
+          || parsed.hostname === 'challenges.cloudflare.com'
+        )) {
+          win.loadURL(url).catch((error) => {
+            if (error && (error.code === 'ERR_ABORTED' || error.errno === -3)) return;
+            console.warn('[external-window] popup load failed:', error.message);
+          });
+        }
+      } catch {
+        // Deny malformed URLs.
+      }
+      return { action: 'deny' };
+    });
+
+    win.webContents.on('will-navigate', (event, url) => {
+      try {
+        if (new URL(url).protocol !== 'https:') event.preventDefault();
+      } catch {
+        event.preventDefault();
+      }
+    });
+
+    win.on('closed', () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (downloads.length > 0) resolve(downloads);
+      else reject(new Error('No files were downloaded from workupload.'));
+    });
+
+    win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (errorCode === -3) return;
+      console.warn('[external-window] load failed:', { errorCode, errorDescription, validatedURL, isMainFrame });
+    });
+
+    win.webContents.on('did-finish-load', startAutoClick);
+
+    armTimeout();
+    win.loadURL(pageUrl).catch((error) => {
+      if (error && (error.code === 'ERR_ABORTED' || error.errno === -3)) return;
+      console.warn('[external-window] loadURL failed:', error.message);
+    });
   });
 }
 
@@ -1121,6 +1550,39 @@ ipcMain.handle('open-web-library', async () => {
   const url = `http://localhost:${status.port}/${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   await shell.openExternal(url);
   return true;
+});
+
+// Tampermonkey installs a userscript only after the user confirms it. The app
+// serves the script from a temporary loopback server, opens the browser on it,
+// and Tampermonkey shows its install page.
+function buildCompanionUserscript() {
+  return buildUserscript({ version: app.getVersion() });
+}
+
+async function openUserscriptInBrowser(script, logEvent) {
+  let session = null;
+  try {
+    session = await startUserscriptServer({ script });
+    await shell.openExternal(session.url);
+    return { ok: true };
+  } catch (error) {
+    if (session) session.close();
+    logger.warn(logEvent, { message: error.message });
+    return { ok: false, error: 'The browser could not be opened. Check the default browser and try again.' };
+  }
+}
+
+ipcMain.handle('install-userscript', () => openUserscriptInBrowser(
+  buildCompanionUserscript(), 'userscript-install-failed'));
+
+ipcMain.handle('copy-userscript', () => {
+  try {
+    clipboard.writeText(buildCompanionUserscript());
+    return { ok: true };
+  } catch (error) {
+    logger.warn('userscript-copy-failed', { message: error.message });
+    return { ok: false, error: error.message };
+  }
 });
 
 ipcMain.handle('create-showcase-snapshot', async () => {

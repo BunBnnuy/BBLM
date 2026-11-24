@@ -322,6 +322,8 @@
     }),
     setWebServer: async () => window.api.getWebServerStatus(),
     openWebLibrary: async () => { window.location.reload(); return true; },
+    installUserscript: okFalse,
+    copyUserscript: okFalse,
 
     // Access token for downloads, settings and the other actions.
     hasWebToken: () => Boolean(WEB_TOKEN),
